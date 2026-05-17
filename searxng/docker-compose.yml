@@ -1,0 +1,61 @@
+name: searxng
+
+services:
+  core:
+    container_name: searxng-core
+    image: docker.io/searxng/searxng:${SEARXNG_VERSION:-latest}
+    restart: always
+    ports:
+      - ${SEARXNG_HOST:+${SEARXNG_HOST}:}${SEARXNG_PORT:-8080}:${SEARXNG_PORT:-8080}
+    env_file: ./.env
+    volumes:
+      - ./core-config/:/etc/searxng/:Z
+      - core-data:/var/cache/searxng/
+      # Base overrides
+      - ./custom.css:/usr/local/searxng/searx/static/themes/simple/css/custom.css:ro
+      - ./base.html:/usr/local/searxng/searx/templates/simple/base.html:ro
+      # The Native Linux Volume mapped directly to the whitelisted img folder
+      - searxng-img-data:/usr/local/searxng/searx/static/themes/simple/img:rw
+
+  valkey:
+    container_name: searxng-valkey
+    image: docker.io/valkey/valkey:9-alpine
+    command: valkey-server --save 30 1 --loglevel warning
+    restart: always
+    volumes:
+      - valkey-data:/data/
+
+  logo-rotator:
+    # Upgrading to Alpine so we can install the Docker CLI
+    image: alpine:latest
+    restart: unless-stopped
+    volumes:
+      # This socket gives the sidecar permission to control Docker on the host
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/data:ro
+      - searxng-img-data:/native-img:rw
+    command: >
+      /bin/sh -c "
+      apk add --no-cache bash docker-cli &&
+      exec bash -c '
+      while true; do
+        # 1. Pick the random logo
+        files=(/data/logos/*.png);
+        random_file=$${files[$$RANDOM % $${#files[@]}]};
+        
+        # 2. Overwrite the file inside the native volume
+        cp -f \"$$random_file\" /native-img/searxng.png;
+        chmod 644 /native-img/searxng.png;
+        echo \"Rotated logo to $$(basename \"$$random_file\")\";
+        
+        # 3. Reboot the SearXNG web server so it is forced to read the new file size
+        docker restart searxng-core;
+        
+        # 4. Sleep for 24 hours
+        sleep 86400;
+      done'"
+
+volumes:
+  core-data:
+  valkey-data:
+  searxng-img-data: # Pure volume definition

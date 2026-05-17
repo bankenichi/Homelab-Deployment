@@ -1,0 +1,24 @@
+/* --- MAIN LANDING PAGE --- */
+.index .title {
+    background-image: url('../img/searxng.png') !important;
+    min-height: 18rem !important; 
+    margin-top: -6rem !important;  
+    margin-bottom: 1.5rem !important; 
+    background-position-y: top !important; 
+}
+
+/* --- SEARCH RESULTS PAGE --- */
+#search_logo svg {
+    display: none !important;
+}
+
+#search_logo {
+    background-image: url('../img/searxng.png') !important; 
+    background-size: contain !important;
+    background-repeat: no-repeat !important;
+    background-position: center left !important;
+    width: 120px !important; 
+    height: 35px !important;
+    display: inline-block !important;
+    margin-top: 0.2rem !important;
+}
