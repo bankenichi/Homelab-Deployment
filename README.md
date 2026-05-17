@@ -15,7 +15,7 @@ A fully automated, zero-friction SearXNG local deployment tailored for Windows. 
 
 This stack is designed to be highly portable and deployable on completely bare-metal Windows installations.
 
-1. Download the `Deploy-Homelab.ps1` script to your desired machine.
+1. Download the `Deploy-Homelab.ps1` script to your desired machine and place it in the folder where you want your Homelab to live.
 2. Right-click the script and select **Run with PowerShell**.
 3. Accept any Administrator prompts (required to configure your `hosts` file and install dependencies).
 4. Sit back. The script will automatically carve out its directory, pull the latest code, and launch the search engine.
