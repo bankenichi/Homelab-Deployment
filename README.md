@@ -6,7 +6,7 @@ A fully automated, zero-friction SearXNG local deployment tailored for Windows. 
 
 * **Prettified Local URL (`find/`)**: No more typing IP addresses, `localhost`, or port numbers. The deployment script automatically configures your local DNS and Caddy reverse proxy so you can access your search engine simply by navigating to `find/` in your browser.
 * **Daily Logo Rotator**: Keep your search engine looking fresh. A lightweight background container automatically picks a random image from your `logos` folder and safely applies it via an atomic file swap every 24 hours.
-* **Create Your Own Logos**: Want to design perfect, true-alpha PNG logos to add to the rotation? Use my **[Monogram Logo Generator](https://github.com/bankenichi/Monogram-Logo-Generator)** to instantly create perfectly sized, transparent background graphics. Just generate them and drop them straight into the `logos` folder!
+* **Create Your Own Logos**: Want to design perfect, PNG logos to add to the rotation? Use my **[Monogram Logo Generator](https://github.com/bankenichi/Monogram-Logo-Generator)** to instantly create perfectly sized, transparent background graphics. Just generate them and drop them straight into the `logos` folder!
 * **Self-Actualizing Deployment**: A single, robust PowerShell script (`Deploy-Homelab.ps1`) handles everything. It checks for dependencies, installs WSL2, Docker, and Git if missing, clones or updates this repository, injects the necessary DNS records, and spins up the entire stack.
 
 ---
