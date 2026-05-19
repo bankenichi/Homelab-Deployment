@@ -1,0 +1,32 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "llama.cpp": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "llama-server (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8081/v1",
+        "apiKey": "sk-no-key-required",
+        "fetchOptions": {
+          "timeout": 300000
+        }
+      },
+      "models": {
+        "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-I-Compact": {
+          "name": "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-I-Compact"
+        }
+      }
+    }
+  },
+  "model": "llama.cpp/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-I-Compact",
+  "mcp": {
+    "coding-assistant": {
+      "type": "local",
+      "command": [
+        "python",
+        "C:\\Users\\kenic\\Documents\\mcp-server\\mcp_server.py"
+      ],
+      "enabled": true
+    }
+  }
+}
