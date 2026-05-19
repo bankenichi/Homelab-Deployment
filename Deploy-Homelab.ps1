@@ -446,7 +446,7 @@ Write-Host "Creating global run-llama command and external configuration file...
 $llamaArgsFile = "$llamaInstallDir\llama-args.txt"
 $llamaWrapperScript = "$llamaInstallDir\run-llama.ps1"
 
-$initialArgs = '-m "C:\Program Files\llamacpp\Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-I-Compact.gguf" --mmproj "C:\Program Files\llamacpp\mmproj.gguf" --n-gpu-layers 999 --no-mmap --cache-type-k turbo4 --cache-type-v turbo3 --jinja -c 262144 --mlock --n-cpu-moe 28 --context-shift --keep -1 -np 1 --port 8081 --spec-type mtp --spec-draft-n-max 1'
+$initialArgs = '-m "C:\Program Files\llamacpp\Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-I-Compact.gguf" --mmproj "C:\Program Files\llamacpp\mmproj.gguf" --n-gpu-layers 999 --no-mmap --cache-type-k turbo4 --cache-type-v turbo3 --jinja -c 262144 --mlock --n-cpu-moe 28 --context-shift --keep -1 -np 1 --port 8081 --spec-type mtp --spec-draft-n-max 2'
 Set-Content -Path $llamaArgsFile -Value $initialArgs -Force
 
 $wrapperContent = @"
