@@ -2,6 +2,10 @@ http://find {
     reverse_proxy host.docker.internal:8080
 }
 
+http://draw {
+    reverse_proxy host.docker.internal:5000
+}
+
 # Example for your Llama UI (just change the port to whatever you use)
 #http://chat.local {
 #    reverse_proxy host.docker.internal:3000
