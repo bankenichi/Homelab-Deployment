@@ -17,14 +17,14 @@ A comprehensive system and codebase integration tool designed for local develope
 A massive 31-tool integration for the Proton privacy ecosystem, allowing your AI to interact securely with Mail, Pass, Drive, and VPN. 
 * **Capabilities:** The AI can read/send emails, search Proton Pass vaults, download/upload files to Proton Drive via rclone, and check VPN status.
 * **Format & Compatibility:** Ships as a convenient `.mcpb` bundle for instant configuration within Claude Desktop, or can be run completely standalone via Python or Node for native OpenCode integration.
-* **Secure Credential Storage:** Credentials are never committed to version control. They are stored locally and securely in either a `.env` file (excluded via gitignore) or a `bridge.json` file located in your user profile at `~/.proton-mcp/`.
+* **Secure Credential Storage:** Credentials are never committed to version control. They are kept as .env variables, or stored locally and securely in either a `.env` file (excluded via gitignore) or a `bridge.json` file located in your user profile at `~/.proton-mcp/`.
 
 ## Core Infrastructure
 
 * **Prettified Local DNS Routing:** No more typing IP addresses or port numbers. The deployment script automatically configures your Windows hosts file and a Caddy reverse proxy.
 * **Local LLM Server (Llama.cpp):** Automatically downloads and configures a highly optimized, local instance of Llama.cpp. The deployment includes pre-configured server flags fine-tuned for high-throughput inference, accessible globally via the `run-llama` command.
 * **Agentic CLI (OpenCode):** Seamlessly installs Node.js and the `opencode-ai` CLI. The script automatically creates robust symlinks, mapping your local `.agents` and `opencode` configurations directly into the repository for safe version control.
-* **SearXNG & Daily Logo Rotator:** A private, local search engine that stays fresh. A lightweight background container automatically picks a random image from your `logos` folder and applies it via an atomic file swap every 24 hours.
+* **SearXNG & Daily Logo Rotator:** A private, local search engine that stays fresh. A lightweight background container automatically picks a random image from your `logos` folder and applies it via an atomic file swap every 24 hours. (Think Google Doodles)
 
 ## Installation & Deployment
 
@@ -55,6 +55,11 @@ If this does not open like it should go to Settings > Extensions > Advanced Sett
 The tool can be configured to use a different sender address than your main proton email in the "From" field.
 
 You can also configure it to append a custome HTML signature by having a file with a valid file name in the same folder ("html_signature.txt","html signature.txt","signature.html").
+
+### Optional: Adding Logos to SearXNG
+To add more images to the rotation, simply place any `.png` files into the `searxng/logos/` folder. The rotator script will automatically include them in the pool during its next 24-hour cycle (or the next time the stack is restarted).
+
+**Create Your Own Logos**: Want to design perfect, PNG logos to add to the rotation? Use my **[Monogram Logo Generator](https://github.com/bankenichi/Monogram-Logo-Generator)** to instantly create perfectly sized, transparent background graphics. Just generate them and drop them straight into the `logos` folder!
 
 ## Troubleshooting & Failure Modes
 
