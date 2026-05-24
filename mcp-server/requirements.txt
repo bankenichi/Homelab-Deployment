@@ -1,0 +1,11 @@
+mcp>=1.0
+duckduckgo-search>=7.0
+beautifulsoup4>=4.12
+requests>=2.34
+psutil>=7.0
+pdfplumber>=0.11
+markdown>=3.10
+markdown-it-py>=4.2
+tinycss2>=1.5
+textract>=1.0
+pyyaml>=6.0

@@ -24,7 +24,15 @@
       "type": "local",
       "command": [
         "python",
-        "C:\\Users\\kenic\\Documents\\mcp-server\\mcp_server.py"
+        "C:\\Users\\kenic\\Documents\\Homelab\\mcp-server\\mcp_server.py"
+      ],
+      "enabled": true
+    },
+    "proton-suite": {
+      "type": "local",
+      "command": [
+        "python",
+        "C:\\Users\\kenic\\Documents\\Homelab\\proton-mcp\\proton_mcp.py"
       ],
       "enabled": true
     }
