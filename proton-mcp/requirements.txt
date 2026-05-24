@@ -1,0 +1,4 @@
+# Python deps for the standalone proton_mcp.py server.
+# (The Node MCP — index.js — does not use Python at all.)
+
+mcp>=1.0

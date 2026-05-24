@@ -1,0 +1,95 @@
+{
+  "manifest_version": "0.2",
+  "name": "proton",
+  "display_name": "Proton Mail",
+  "version": "1.0.12",
+  "description": "Proton Mail, Pass, Drive, and VPN access via Proton Bridge",
+  "author": {
+    "name": "jorgenclaw",
+    "url": "https://github.com/jorgenclaw/proton-mcp"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jorgenclaw/proton-mcp"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/index.js"
+      ],
+      "env": {
+        "PROTON_BRIDGE_HOST": "${user_config.bridge_host}",
+        "PROTON_BRIDGE_IMAP_PORT": "${user_config.imap_port}",
+        "PROTON_BRIDGE_SMTP_PORT": "${user_config.smtp_port}",
+        "PROTON_BRIDGE_USER": "${user_config.bridge_user}",
+        "PROTON_BRIDGE_USERNAME": "${user_config.bridge_user}",
+        "PROTON_BRIDGE_PASS": "${user_config.bridge_pass}",
+        "PROTON_BRIDGE_PASSWORD": "${user_config.bridge_pass}",
+        "PROTON_BRIDGE_FROM": "${user_config.bridge_from}",
+        "PROTON_SIGNATURE": "${user_config.signature}"
+      }
+    }
+  },
+  "user_config": {
+    "bridge_host": {
+      "type": "string",
+      "title": "Bridge Host",
+      "description": "Proton Bridge host address. Default 127.0.0.1.",
+      "required": true,
+      "default": "127.0.0.1"
+    },
+    "imap_port": {
+      "type": "string",
+      "title": "IMAP Port",
+      "description": "Proton Bridge IMAP port. Default 1143.",
+      "required": true,
+      "default": "1143"
+    },
+    "smtp_port": {
+      "type": "string",
+      "title": "SMTP Port",
+      "description": "Proton Bridge SMTP port. Default 1025.",
+      "required": true,
+      "default": "1025"
+    },
+    "bridge_user": {
+      "type": "string",
+      "title": "Proton Email",
+      "description": "Your full Proton account email (e.g. you@proton.me).",
+      "required": true
+    },
+    "bridge_pass": {
+      "type": "string",
+      "title": "Bridge Password",
+      "description": "Bridge-generated password from Proton Bridge Settings (NOT your Proton account password).",
+      "required": true,
+      "sensitive": true
+    },
+    "bridge_from": {
+      "type": "string",
+      "title": "From Email",
+      "description": "Email address to send messages from (usually the same as Proton Email).",
+      "required": true
+    },
+    "signature": {
+      "type": "string",
+      "title": "Email Signature (HTML)",
+      "description": "Paste raw HTML for your email signature. Supports inline images (base64 src), hyperlinks, and formatted text. Appended automatically to every outgoing message.",
+      "required": false,
+      "default": ""
+    }
+  },
+  "compatibility": {
+    "platforms": [
+      "win32",
+      "darwin",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=22.0.0"
+    }
+  }
+}
