@@ -14,6 +14,34 @@ $llamaModelFile = "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-
 $llamaVisionRepo = "mudler/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-GGUF"
 $llamaVisionFile = "mmproj.gguf"
 
+# === HELPER: CONTAINER HEALTH CHECK ===
+function Test-ContainerHealth {
+    param(
+        [string]$ContainerName,
+        [int]$MaxRetries = 3,
+        [int]$TimeoutSeconds = 30
+    )
+    $retry = 0
+    while ($retry -lt $MaxRetries) {
+        try {
+            $status = docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Running}}{{end}}' $ContainerName 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                if ($status -eq 'healthy' -or $status -eq 'true') {
+                    Write-Host "  Container '$ContainerName' is healthy." -ForegroundColor Green
+                    return
+                }
+            }
+        } catch {
+            Write-Host "  Health check for '$ContainerName' failed: $_" -ForegroundColor DarkGray
+        }
+
+        Write-Host "  Container '$ContainerName' not yet healthy (attempt $($retry + 1)/$MaxRetries). Waiting ${MaxRetries} retries x ${TimeoutSeconds}s each..." -ForegroundColor DarkGray
+        Start-Sleep -Seconds $TimeoutSeconds
+        $retry++
+    }
+    Exit-Fatal "Container '$ContainerName' failed to become healthy after ${TimeoutSeconds}s x ${MaxRetries} retries."
+}
+
 # === HELPER: FATAL ERROR ===
 function Exit-Fatal {
     param([string]$Message)
@@ -394,8 +422,19 @@ if (Test-Path $llamaInstallDir) {
         git pull
         if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to pull updates for llamacpp." }
     } else {
-        Write-Host "Directory $llamaInstallDir exists but is NOT a git repo. Removing and re-cloning..." -ForegroundColor Yellow
-        Remove-Item -Path $llamaInstallDir -Recurse -Force -ErrorAction Stop
+        Write-Host "Directory $llamaInstallDir exists but is NOT a git repo. Backing up and re-cloning..." -ForegroundColor Yellow
+        $backupName = "llamacpp.backup"
+        $backupPath = "$llamaInstallDir.backup"
+        if (Test-Path $backupPath) {
+            Write-Host "Removing old backup from previous deployment..." -ForegroundColor DarkGray
+            Remove-Item -Path $backupPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        try {
+            Rename-Item -Path $llamaInstallDir -NewName $backupName -Force
+            Write-Host "Original folder renamed to $backupName for safety." -ForegroundColor DarkGray
+        } catch {
+            Exit-Fatal "Could not rename $llamaInstallDir (file may be locked by another process). Please close any applications using files in that folder, then rerun this script."
+        }
         $LASTEXITCODE = 0
         git clone $llamaRepoUrl $llamaInstallDir
         if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to clone llamacpp repository." }
@@ -523,6 +562,7 @@ $LASTEXITCODE = 1
 docker compose up -d
 Pop-Location
 if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to start Caddy Proxy. Check docker compose output above." }
+Test-ContainerHealth -ContainerName "caddy"
 
 Write-Host "Booting SearXNG..." -ForegroundColor Cyan
 Push-Location "$targetDir\searxng"
@@ -530,6 +570,7 @@ $LASTEXITCODE = 1
 docker compose up -d
 Pop-Location
 if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to start SearXNG. Check docker compose output above." }
+Test-ContainerHealth -ContainerName "searxng-core"
 
 Write-Host "Booting Excalidraw..." -ForegroundColor Cyan
 Push-Location "$targetDir\excalidraw"
@@ -537,6 +578,7 @@ $LASTEXITCODE = 1
 docker compose up -d
 Pop-Location
 if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to start Excalidraw. Check docker compose output above." }
+Test-ContainerHealth -ContainerName "excalidraw"
 
 Write-Host "All containers are up." -ForegroundColor Green
 
