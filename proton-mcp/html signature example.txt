@@ -1,0 +1,2 @@
+<p>Anything You Want to Have on the Line Before Your Name<br /><strong>Your Name Goes Here</strong></p>
+<p><a href="website link when you click your image"> <img style="width: 126px; height: 126; display: block;" src="data:image/png;base64,image base64 data goes here, do not delete the closing quote" alt="Any alt text you want displayed when hovering over the image" /> </a></p>
