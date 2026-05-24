@@ -14,6 +14,14 @@ $llamaModelFile = "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-
 $llamaVisionRepo = "mudler/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-GGUF"
 $llamaVisionFile = "mmproj.gguf"
 
+# === HELPER: FATAL ERROR ===
+function Exit-Fatal {
+    param([string]$Message)
+    Write-Error $Message
+    Pause
+    exit 1
+}
+
 # === HELPER: CONTAINER HEALTH CHECK ===
 function Test-ContainerHealth {
     param(
@@ -39,29 +47,113 @@ function Test-ContainerHealth {
         Start-Sleep -Seconds $TimeoutSeconds
         $retry++
     }
-    Exit-Fatal "Container '$ContainerName' failed to become healthy after ${TimeoutSeconds}s x ${MaxRetries} retries."
+    Exit-Fatal "Container '$ContainerName' failed to become healthy after $MaxRetries retries x ${TimeoutSeconds}s each."
 }
 
-# === HELPER: FATAL ERROR ===
-function Exit-Fatal {
-    param([string]$Message)
-    Write-Error $Message
-    Pause
-    exit 1
+# === HELPER: SAFE PROCESS KILLER ===
+$handleExe = "$env:TEMP\handle.exe"
+function Stop-LockingProcesses {
+    param([string]$Path)
+
+    if (!(Test-Path $script:handleExe)) {
+        Write-Host "Downloading Sysinternals handle.exe..." -ForegroundColor DarkGray
+        try {
+            Invoke-WebRequest -Uri "https://live.sysinternals.com/handle.exe" -OutFile $script:handleExe -ErrorAction Stop
+        } catch {
+            Write-Warning "Could not download handle.exe: $_. Skipping lock detection."
+            return
+        }
+    }
+
+    $output = & $script:handleExe -accepteula -nobanner $Path 2>&1
+    $pids = $output |
+        Where-Object { $_ -match 'pid:\s*(\d+)' } |
+        ForEach-Object { [int]($Matches[1]) } |
+        Sort-Object -Unique
+
+    if (!$pids) {
+        Write-Host "No locking processes detected for $Path." -ForegroundColor DarkGray
+        return
+    }
+
+    # Protected processes list to prevent catastrophic desktop/IDE crashes
+    $protectedProcesses = @(
+        "explorer", "Code", "cursor", "WindowsTerminal", "pwsh", "powershell", "cmd",
+        "idea64", "pycharm64", "studio64", "devenv",
+        "WINWORD", "EXCEL", "POWERPNT"
+    )
+
+    foreach ($procId in $pids) {
+        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+        if ($proc) {
+            if ($protectedProcesses -contains $proc.Name) {
+                Write-Warning "Skipping '$($proc.Name)' (PID $procId) - Protected system/editor process holding a lock!"
+            } else {
+                Write-Host "Stopping '$($proc.Name)' (PID $procId) which is locking $Path..." -ForegroundColor Yellow
+                Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+# === HELPER: SYMLINK INITIALIZER ===
+function Initialize-Symlink {
+    param([string]$LinkPath, [string]$TargetDir)
+
+    $backupPath = "$LinkPath.backup"
+
+    if (Test-Path $LinkPath) {
+        $item = Get-Item $LinkPath -Force
+        if ($item.LinkType -eq 'SymbolicLink') {
+            Write-Host "Symlink already exists for $LinkPath. Skipping." -ForegroundColor DarkGray
+            return
+        } else {
+            Write-Host "Existing directory found at $LinkPath. Backing up to $backupPath..." -ForegroundColor Yellow
+            if (Test-Path $backupPath) { Remove-Item -Path $backupPath -Recurse -Force }
+            Copy-Item -Path $LinkPath -Destination $backupPath -Recurse -Force
+
+            if (!(Test-Path $TargetDir)) {
+                Write-Host "Target $TargetDir not found. Seeding from backup..." -ForegroundColor Cyan
+                Copy-Item -Path $backupPath -Destination $TargetDir -Recurse -Force
+            } else {
+                Write-Host "Target $TargetDir already exists. Repo version takes precedence; local backup kept at $backupPath." -ForegroundColor DarkGray
+            }
+
+            try {
+                Remove-Item -Path $LinkPath -Recurse -Force -ErrorAction Stop
+            } catch {
+                Write-Host "Folder is locked. Attempting to free it safely..." -ForegroundColor Yellow
+                Stop-LockingProcesses -Path $LinkPath
+                Start-Sleep -Seconds 2
+                try {
+                    Remove-Item -Path $LinkPath -Recurse -Force -ErrorAction Stop
+                } catch {
+                    Write-Warning "Still could not remove $LinkPath after clearing safe processes. You may need to manually close IDEs/Terminals using it."
+                    return
+                }
+            }
+        }
+    } elseif (!(Test-Path $TargetDir)) {
+        Write-Host "Creating empty target directory $TargetDir..." -ForegroundColor DarkGray
+        New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
+    }
+
+    Write-Host "Creating symlink: $LinkPath -> $TargetDir" -ForegroundColor Green
+    New-Item -ItemType SymbolicLink -Path $LinkPath -Target $TargetDir -Force | Out-Null
 }
 
 # === 1b. CLEAN UP POST-REBOOT SCHEDULED TASK (if resuming) ===
 $resumeTaskName = "ResumeHomelabBootstrap"
-$resumingAsSystem = $false
+$resumingAsUser = $false
 schtasks /query /tn $resumeTaskName 2>$null | Out-Null
 if ($LASTEXITCODE -eq 0) {
     schtasks /delete /tn $resumeTaskName /f | Out-Null
-    $resumingAsSystem = $true
+    $resumingAsUser = $true
     Write-Host "Resumed from post-reboot scheduled task. Task cleaned up." -ForegroundColor DarkGray
 }
 
-# Resolve the target user profile -- either the saved resume user (SYSTEM context) or current user
-if ($resumingAsSystem -and (Test-Path $resumeUserFile)) {
+# Resolve the target user profile -- either the saved resume user or current user
+if ($resumingAsUser -and (Test-Path $resumeUserFile)) {
     $resumeUsername = (Get-Content $resumeUserFile -Raw).Trim()
     $script:resolvedHomeDir = "C:\Users\$resumeUsername"
     Write-Host "Resolved user home directory: $($script:resolvedHomeDir)" -ForegroundColor DarkGray
@@ -84,6 +176,10 @@ if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
 Write-Host "=== SELF-ACTUALIZING HOMELAB BOOTSTRAP ===" -ForegroundColor Cyan
 
 # === 3. DEPENDENCY CHECK: WSL2 ===
+Write-Host "Ensuring WSL is installed and enabled..." -ForegroundColor Cyan
+wsl --install --no-distribution
+Start-Sleep -Seconds 3 # Give the hypervisor a moment to register
+
 Write-Host "Updating WSL2 to latest version..." -ForegroundColor Cyan
 wsl --update
 if ($LASTEXITCODE -ne 0) {
@@ -107,20 +203,22 @@ if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
 
     Write-Host "Installing Docker Desktop..." -ForegroundColor Yellow
     Start-Process -FilePath $installerPath -ArgumentList "install", "--quiet", "--accept-license" -Wait -NoNewWindow
-    
+
     # --- GRACEFUL REBOOT SEQUENCE ---
-    # Save the current username so the SYSTEM-context resume can resolve the correct user profile
+    # Save the current username so the resume task can resolve the correct user profile
     $resumeUserDir = Split-Path $resumeUserFile
     if (!(Test-Path $resumeUserDir)) { New-Item -ItemType Directory -Path $resumeUserDir -Force | Out-Null }
     $env:USERNAME | Set-Content -Path $resumeUserFile -Force
     Write-Host "Saved resume username ($env:USERNAME) to $resumeUserFile." -ForegroundColor DarkGray
 
-    # Register a one-shot scheduled task running as SYSTEM so it resumes fully elevated after reboot with no UAC prompt
+    # Register a one-shot scheduled task running as the interactive user with highest privileges.
+    # Running as SYSTEM would break winget, Docker Desktop (Session 0 isolation), and WSL profile mapping.
+    # The user will see one UAC prompt on login before the script resumes — this is expected and required.
     $resumeTaskName = "ResumeHomelabBootstrap"
     $resumeCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File `"$PSCommandPath`""
-    schtasks /create /tn $resumeTaskName /sc ONLOGON /rl HIGHEST /ru "SYSTEM" /tr $resumeCommand /f | Out-Null
+    schtasks /create /tn $resumeTaskName /sc ONLOGON /rl HIGHEST /ru $env:USERNAME /tr $resumeCommand /f | Out-Null
     if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to register post-reboot resume task via schtasks." }
-    
+
     Write-Host ""
     Write-Host "=======================================================" -ForegroundColor Red
     Write-Host "                SYSTEM REBOOT REQUIRED                 " -ForegroundColor Red
@@ -130,7 +228,9 @@ if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Host "only takes effect after a full logout/reboot.          " -ForegroundColor Yellow
     Write-Host ""
     Write-Host "The Homelab deployment will AUTOMATICALLY RESUME       " -ForegroundColor Cyan
-    Write-Host "exactly where it left off after you log back in.       " -ForegroundColor Cyan
+    Write-Host "after you log back in. You will see ONE UAC prompt     " -ForegroundColor Cyan
+    Write-Host "asking for administrator privileges -- please accept   " -ForegroundColor Cyan
+    Write-Host "it to allow the deployment to complete.                " -ForegroundColor Cyan
     Write-Host ""
     Write-Host "PLEASE SAVE ALL YOUR WORK NOW." -ForegroundColor Red
     Write-Host "=======================================================" -ForegroundColor Red
@@ -143,7 +243,7 @@ if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Progress -Activity "System Reboot Imminent" -Completed
     Write-Host "Rebooting now..." -ForegroundColor Red
     Restart-Computer -Force
-    exit 
+    exit
 } else {
     Write-Host "Docker is ready." -ForegroundColor Green
 }
@@ -175,12 +275,12 @@ if (!(Get-Command opencode -ErrorAction SilentlyContinue)) {
     if (!(Get-Command npm -ErrorAction SilentlyContinue)) {
         Exit-Fatal "npm is required to install opencode-ai. Please install Node.js manually and re-run."
     }
-    
+
     $LASTEXITCODE = 0
     npm install -g opencode-ai@latest
     if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to install opencode-ai via npm." }
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-    
+
     if (!(Get-Command opencode -ErrorAction SilentlyContinue)) {
         Write-Warning "OpenCode command not found after install, but continuing (you may need to restart your terminal)."
     } else {
@@ -276,99 +376,7 @@ if (!(Test-Path $opencodeAndSkillsDir)) {
 }
 
 Write-Host "Backing up existing OpenCode configurations and creating symlinks to the repository..." -ForegroundColor Cyan
-
-# === HELPER: SAFE PROCESS KILLER ===
-$handleExe = "$env:TEMP\handle.exe"
-function Stop-LockingProcesses {
-    param([string]$Path)
-
-    if (!(Test-Path $script:handleExe)) {
-        Write-Host "Downloading Sysinternals handle.exe..." -ForegroundColor DarkGray
-        try {
-            Invoke-WebRequest -Uri "https://live.sysinternals.com/handle.exe" -OutFile $script:handleExe -ErrorAction Stop
-        } catch {
-            Write-Warning "Could not download handle.exe: $_. Skipping lock detection."
-            return
-        }
-    }
-
-    $output = & $script:handleExe -accepteula -nobanner $Path 2>&1
-    $pids = $output |
-        Where-Object { $_ -match 'pid:\s*(\d+)' } |
-        ForEach-Object { [int]($Matches[1]) } |
-        Sort-Object -Unique
-
-    if (!$pids) {
-        Write-Host "No locking processes detected for $Path." -ForegroundColor DarkGray
-        return
-    }
-
-    # Protected processes list to prevent catastrophic desktop/IDE crashes
-    $protectedProcesses = @(
-        "explorer", "Code", "cursor", "WindowsTerminal", "pwsh", "powershell", "cmd", 
-        "idea64", "pycharm64", "studio64", "devenv", 
-        "WINWORD", "EXCEL", "POWERPNT"
-    )
-
-    foreach ($procId in $pids) {
-        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
-        if ($proc) {
-            if ($protectedProcesses -contains $proc.Name) {
-                Write-Warning "Skipping '$($proc.Name)' (PID $procId) - Protected system/editor process holding a lock!"
-            } else {
-                Write-Host "Stopping '$($proc.Name)' (PID $procId) which is locking $Path..." -ForegroundColor Yellow
-                Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
-            }
-        }
-    }
-}
-
 Write-Host "Ensuring symlink paths are clear and backed up if necessary..." -ForegroundColor DarkGray
-
-function Initialize-Symlink {
-    param([string]$LinkPath, [string]$TargetDir)
-
-    $backupPath = "$LinkPath.backup"
-
-    if (Test-Path $LinkPath) {
-        $item = Get-Item $LinkPath -Force
-        if ($item.LinkType -eq 'SymbolicLink') {
-            Write-Host "Symlink already exists for $LinkPath. Skipping." -ForegroundColor DarkGray
-            return
-        } else {
-            Write-Host "Existing directory found at $LinkPath. Backing up to $backupPath..." -ForegroundColor Yellow
-            if (Test-Path $backupPath) { Remove-Item -Path $backupPath -Recurse -Force }
-            Copy-Item -Path $LinkPath -Destination $backupPath -Recurse -Force
-
-            if (!(Test-Path $TargetDir)) {
-                Write-Host "Target $TargetDir not found. Seeding from backup..." -ForegroundColor Cyan
-                Copy-Item -Path $backupPath -Destination $TargetDir -Recurse -Force
-            } else {
-                Write-Host "Target $TargetDir already exists. Repo version takes precedence; local backup kept at $backupPath." -ForegroundColor DarkGray
-            }
-
-            try {
-                Remove-Item -Path $LinkPath -Recurse -Force -ErrorAction Stop
-            } catch {
-                Write-Host "Folder is locked. Attempting to free it safely..." -ForegroundColor Yellow
-                Stop-LockingProcesses -Path $LinkPath
-                Start-Sleep -Seconds 2
-                try {
-                    Remove-Item -Path $LinkPath -Recurse -Force -ErrorAction Stop
-                } catch {
-                    Write-Warning "Still could not remove $LinkPath after clearing safe processes. You may need to manually close IDEs/Terminals using it."
-                    return
-                }
-            }
-        }
-    } elseif (!(Test-Path $TargetDir)) {
-        Write-Host "Creating empty target directory $TargetDir..." -ForegroundColor DarkGray
-        New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
-    }
-
-    Write-Host "Creating symlink: $LinkPath -> $TargetDir" -ForegroundColor Green
-    New-Item -ItemType SymbolicLink -Path $LinkPath -Target $TargetDir -Force | Out-Null
-}
 
 $homeDir = $script:resolvedHomeDir
 $agentsLink = "$homeDir\.agents"
@@ -446,19 +454,18 @@ if (Test-Path $llamaInstallDir) {
     if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to clone llamacpp repository." }
 }
 
+# FIX 3: Use [Environment]::SetEnvironmentVariable instead of direct registry write.
+# This broadcasts WM_SETTINGCHANGE so running apps pick up the new PATH immediately.
 Write-Host "Verifying System PATH for llamacpp..." -ForegroundColor Cyan
-$pathKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("SYSTEM\CurrentControlSet\Control\Session Manager\Environment", $true)
-$currentPath = $pathKey.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+$currentPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
 
 if ($currentPath -notlike "*$llamaInstallDir*") {
-    $newPath = $currentPath + ";" + $llamaInstallDir
-    $pathKey.SetValue("Path", $newPath, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    [Environment]::SetEnvironmentVariable("Path", $currentPath + ";" + $llamaInstallDir, [EnvironmentVariableTarget]::Machine)
     $env:Path += ";$llamaInstallDir"
     Write-Host "Successfully added $llamaInstallDir to the system PATH." -ForegroundColor Green
 } else {
     Write-Host "$llamaInstallDir is already in the system PATH." -ForegroundColor DarkGray
 }
-$pathKey.Close()
 
 Write-Host "Downloading AI Models via Hugging Face..." -ForegroundColor Cyan
 if (Get-Command huggingface-cli -ErrorAction SilentlyContinue) {
@@ -466,12 +473,12 @@ if (Get-Command huggingface-cli -ErrorAction SilentlyContinue) {
     $LASTEXITCODE = 0
     huggingface-cli download $llamaModelRepo $llamaModelFile --local-dir $llamaInstallDir
     if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to download the main GGUF model." }
-    
+
     Write-Host "Downloading Vision MMProj GGUF..." -ForegroundColor Cyan
     $LASTEXITCODE = 0
     huggingface-cli download $llamaVisionRepo $llamaVisionFile --local-dir $llamaInstallDir
     if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to download the vision MMProj model." }
-    
+
     Write-Host "Model downloads complete." -ForegroundColor Green
 } else {
     Exit-Fatal "huggingface-cli is missing after installation step. Cannot proceed with model downloads."
@@ -483,27 +490,17 @@ Write-Host "LLama.cpp deployment complete." -ForegroundColor Green
 Write-Host "Creating global run-llama command and external configuration file..." -ForegroundColor Cyan
 
 $llamaArgsFile = "$llamaInstallDir\llama-args.txt"
-$llamaWrapperScript = "$llamaInstallDir\run-llama.ps1"
+$llamaCmdWrapper = "$llamaInstallDir\run-llama.cmd"
 
-$initialArgs = '-m "C:\Program Files\llamacpp\Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-I-Compact.gguf" --mmproj "C:\Program Files\llamacpp\mmproj.gguf" --n-gpu-layers 999 --no-mmap --cache-type-k turbo4 --cache-type-v turbo3 --jinja -c 262144 --mlock --n-cpu-moe 28 --context-shift --keep -1 -np 1 --port 8081 --spec-type mtp --spec-draft-n-max 2'
+# Write initial args file — edit this file to change llama-server launch parameters
+$initialArgs = '--n-gpu-layers 999 --no-mmap --cache-type-k turbo4 --cache-type-v turbo3 --jinja -c 262144 --mlock --n-cpu-moe 28 --context-shift --keep -1 -np 1 --port 8081 --spec-type mtp --spec-draft-n-max 2 -m "C:\Program Files\llamacpp\Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-I-Compact.gguf" --mmproj "C:\Program Files\llamacpp\mmproj.gguf"'
 Set-Content -Path $llamaArgsFile -Value $initialArgs -Force
 
-$wrapperContent = @"
-`$exePath = "C:\Program Files\llamacpp\llama-server.exe"
-`$argsFile = "C:\Program Files\llamacpp\llama-args.txt"
-
-if (Test-Path `$argsFile) {
-    `$argsText = (Get-Content `$argsFile -Raw).Trim()
-    # Split on whitespace but respect quoted strings (e.g. paths with spaces)
-    `$argsList = [System.Collections.Generic.List[string]]::new()
-    [regex]::Matches(`$argsText, '(?:\"[^\"]*\"|[^\s]+)') | ForEach-Object { `$argsList.Add(`$_.Value) }
-    Write-Host "Booting llama-server with parameters from `$argsFile..." -ForegroundColor Cyan
-    Start-Process -FilePath `$exePath -ArgumentList `$argsList -NoNewWindow -Wait
-} else {
-    Write-Error "Configuration file not found: `$argsFile"
-}
-"@
-Set-Content -Path $llamaWrapperScript -Value $wrapperContent -Force
+# FIX 2: Use a .cmd wrapper instead of .ps1 to avoid PowerShell execution policy issues.
+# llama-server reads arguments via --args-file; the .cmd passes the file path explicitly.
+# Users simply type 'run-llama' in any terminal — no execution policy workarounds needed.
+$cmdContent = "@echo off`r`n`"C:\Program Files\llamacpp\llama-server.exe`" --args-file `"C:\Program Files\llamacpp\llama-args.txt`""
+Set-Content -Path $llamaCmdWrapper -Value $cmdContent -Force
 
 Write-Host "run-llama configured successfully." -ForegroundColor Green
 
@@ -585,7 +582,8 @@ Write-Host "All containers are up." -ForegroundColor Green
 # === 16. SELF-DESTRUCT ===
 if ($isStandalone) {
     Write-Host "Removing standalone bootstrap script..." -ForegroundColor DarkGray
-    Remove-Item -Path $PSCommandPath -Force -ErrorAction SilentlyContinue
+    $cmd = "cmd.exe /c timeout /t 2 /nobreak >nul & del `"$PSCommandPath`""
+    Start-Process -FilePath cmd.exe -ArgumentList "/c", $cmd -WindowStyle Hidden
 }
 
 Write-Host "Bootstrap process complete." -ForegroundColor Green
