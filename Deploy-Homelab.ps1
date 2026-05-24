@@ -35,7 +35,7 @@ function Test-ContainerHealth {
             Write-Host "  Health check for '$ContainerName' failed: $_" -ForegroundColor DarkGray
         }
 
-        Write-Host "  Container '$ContainerName' not yet healthy (attempt $($retry + 1)/$MaxRetries). Waiting ${MaxRetries} retries x ${TimeoutSeconds}s each..." -ForegroundColor DarkGray
+        Write-Host "  Container '$ContainerName' not yet healthy (attempt $($retry + 1)/$MaxRetries). Waiting ${TimeoutSeconds}s..." -ForegroundColor DarkGray
         Start-Sleep -Seconds $TimeoutSeconds
         $retry++
     }
@@ -236,7 +236,7 @@ if (!(Get-Command pip -ErrorAction SilentlyContinue)) {
 if (!(Get-Command huggingface-cli -ErrorAction SilentlyContinue)) {
     Write-Host "Hugging Face CLI not found. Installing via pip..." -ForegroundColor Yellow
     $LASTEXITCODE = 0
-    pip install huggingface_hub[cli]
+    pip install huggingface_hub[cli] --break-system-packages
     if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to install huggingface-cli via pip." }
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 }
