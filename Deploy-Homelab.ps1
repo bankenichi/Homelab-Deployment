@@ -495,6 +495,7 @@ if (Test-Path $llamaInstallDir) {
 # FIX 3: Use [Environment]::SetEnvironmentVariable instead of direct registry write.
 # This broadcasts WM_SETTINGCHANGE so running apps pick up the new PATH immediately.
 Write-Host "Verifying System PATH for llamacpp..." -ForegroundColor Cyan
+$llamaConfigUiDir = "$llamaInstallDir\llama-config-ui"
 $currentPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
 
 if ($currentPath -notlike "*$llamaInstallDir*") {
@@ -503,6 +504,19 @@ if ($currentPath -notlike "*$llamaInstallDir*") {
     Write-Host "Successfully added $llamaInstallDir to the system PATH." -ForegroundColor Green
 } else {
     Write-Host "$llamaInstallDir is already in the system PATH." -ForegroundColor DarkGray
+}
+
+if (Test-Path $llamaConfigUiDir) {
+    if ($currentPath -notlike "*$llamaConfigUiDir*") {
+        $currentPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
+        [Environment]::SetEnvironmentVariable("Path", $currentPath + ";" + $llamaConfigUiDir, [EnvironmentVariableTarget]::Machine)
+        $env:Path += ";$llamaConfigUiDir"
+        Write-Host "Successfully added $llamaConfigUiDir to the system PATH." -ForegroundColor Green
+    } else {
+        Write-Host "$llamaConfigUiDir is already in the system PATH." -ForegroundColor DarkGray
+    }
+} else {
+    Write-Warning "Submodule folder '$llamaConfigUiDir' not found after submodule update. Skipping PATH registration — verify the submodule populated correctly."
 }
 
 Write-Host "Downloading AI Models via Hugging Face..." -ForegroundColor Cyan
