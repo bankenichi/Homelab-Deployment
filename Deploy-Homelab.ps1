@@ -429,6 +429,18 @@ if (Test-Path $llamaInstallDir) {
         $LASTEXITCODE = 0
         git pull
         if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to pull updates for llamacpp." }
+
+        Write-Host "Initializing llamacpp submodules..." -ForegroundColor Cyan
+        $LASTEXITCODE = 0
+        git submodule init
+        if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to initialize llamacpp submodules. Check your network connection and repo access." }
+
+        Write-Host "Updating llamacpp submodules..." -ForegroundColor Cyan
+        $LASTEXITCODE = 0
+        git submodule update
+        if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to update llamacpp submodules. Check your network connection and repo access." }
+
+        Write-Host "Llamacpp submodules are up to date." -ForegroundColor Green
     } else {
         Write-Host "Directory $llamaInstallDir exists but is NOT a git repo. Backing up and re-cloning..." -ForegroundColor Yellow
         $backupName = "llamacpp.backup"
@@ -446,12 +458,38 @@ if (Test-Path $llamaInstallDir) {
         $LASTEXITCODE = 0
         git clone $llamaRepoUrl $llamaInstallDir
         if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to clone llamacpp repository." }
+
+        Write-Host "Initializing llamacpp submodules..." -ForegroundColor Cyan
+        Set-Location $llamaInstallDir
+        $LASTEXITCODE = 0
+        git submodule init
+        if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to initialize llamacpp submodules. Check your network connection and repo access." }
+
+        Write-Host "Updating llamacpp submodules..." -ForegroundColor Cyan
+        $LASTEXITCODE = 0
+        git submodule update
+        if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to update llamacpp submodules. Check your network connection and repo access." }
+
+        Write-Host "Llamacpp submodules are up to date." -ForegroundColor Green
     }
 } else {
     Write-Host "Cloning llama executables directly to $llamaInstallDir..." -ForegroundColor Cyan
     $LASTEXITCODE = 0
     git clone $llamaRepoUrl $llamaInstallDir
     if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to clone llamacpp repository." }
+
+    Write-Host "Initializing llamacpp submodules..." -ForegroundColor Cyan
+    Set-Location $llamaInstallDir
+    $LASTEXITCODE = 0
+    git submodule init
+    if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to initialize llamacpp submodules. Check your network connection and repo access." }
+
+    Write-Host "Updating llamacpp submodules..." -ForegroundColor Cyan
+    $LASTEXITCODE = 0
+    git submodule update
+    if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to update llamacpp submodules. Check your network connection and repo access." }
+
+    Write-Host "Llamacpp submodules are up to date." -ForegroundColor Green
 }
 
 # FIX 3: Use [Environment]::SetEnvironmentVariable instead of direct registry write.

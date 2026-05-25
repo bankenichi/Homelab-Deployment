@@ -38,6 +38,8 @@ brand:
   #    background_color_black: "#000"
 
 search:
+  default_categories:
+    - general
   # Filter results. 0: None, 1: Moderate, 2: Strict
   safe_search: 0
   # Existing autocomplete backends: "360search", "baidu", "bing", "brave", "dbpedia", "duckduckgo", "google",
@@ -156,22 +158,22 @@ ui:
 
 # Lock arbitrary settings on the preferences page.
 #
-# preferences:
-#   lock:
-#     - categories
-#     - language
-#     - autocomplete
-#     - favicon
-#     - safesearch
-#     - method
-#     - doi_resolver
-#     - locale
-#     - theme
-#     - results_on_new_tab
-#     - search_on_category_select
-#     - method
-#     - image_proxy
-#     - query_in_title
+preferences:
+  lock:
+    - categories
+    - language
+    - autocomplete
+    - favicon
+    - safesearch
+    - method
+    - doi_resolver
+    - locale
+    - theme
+    - results_on_new_tab
+    - search_on_category_select
+    - method
+    - image_proxy
+    - query_in_title
 
 # communication with search engines
 #
