@@ -109,6 +109,40 @@ PROTON_BRIDGE_FROM=you@proton.me
 
 Either way, just launch `python3 proton_mcp.py` and the running server is ready for any MCP host to pick up.
 
+## Skill for OpenCode / Claude / other local AI runners
+
+A drop-in **skill** lives in `skill/proton-mail/` inside this bundle. Skills are how local AI runners (OpenCode, Claude Code, Copilot CLI, Gemini CLI) learn *when* and *how* to use the Proton tools — without you having to write a giant system prompt yourself.
+
+Install it by copying the skill folder to your runner's skills directory:
+
+**Linux / macOS**
+
+```bash
+cp -r skill/proton-mail ~/.agents/skills/
+```
+
+**Windows (PowerShell)**
+
+```powershell
+Copy-Item -Recurse skill\proton-mail $HOME\.agents\skills\
+```
+
+The final layout should be:
+
+```
+~/.agents/skills/proton-mail/
+├── SKILL.md
+├── tools-reference.md
+└── workflows.md
+```
+
+`SKILL.md` is the always-loaded part — it tells the runner when to invoke the Proton tools (trigger phrases like "check my email", "get my GitHub password", "what's on Drive"). The two helper files are loaded on demand so the prompt stays cheap:
+
+- `tools-reference.md` — full parameter list and return shape for all 31 tools
+- `workflows.md` — common multi-step recipes (find-and-reply, secure-credential-update, drive-backup, etc.)
+
+The skill is runner-agnostic. Once the file is in place, OpenCode / Claude / Gemini will discover it automatically the next time they start.
+
 ## Tools (31)
 
 ### Mail (15 tools)

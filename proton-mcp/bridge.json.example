@@ -1,9 +1,38 @@
 {
+  "_README": [
+    "Proton MCP — example bridge.json. Copy this file to ~/.proton-mcp/bridge.json",
+    "and edit the values below. Both the Node server (index.js) and the Python",
+    "server (proton_mcp.py) look here first when no PROTON_BRIDGE_* env vars",
+    "are set, so a single file serves both implementations.",
+    "",
+    "PATH:",
+    "  Linux / macOS:  ~/.proton-mcp/bridge.json",
+    "  Windows:        %USERPROFILE%\\.proton-mcp\\bridge.json",
+    "",
+    "JSON has no comments, so the _README and _doc_* fields below are ignored",
+    "by the loaders — strip them or keep them, your call. Only the real keys",
+    "(username, password, imap_host, imap_port, smtp_port, from, signature)",
+    "are read."
+  ],
+
+  "_doc_username": "Your full Proton account email (you@proton.me, you@protonmail.com, or your custom-domain Proton address). The same account Bridge is signed into.",
   "username": "you@proton.me",
+
+  "_doc_password": "The per-app password Bridge generated for you — NOT your Proton account password. Find it in Bridge -> your account -> Mailbox details -> IMAP/SMTP password. Looks like a random 16-character string.",
   "password": "your-bridge-app-password",
+
+  "_doc_imap_host": "Where Proton Bridge is listening for IMAP. Almost always 127.0.0.1 (localhost). Change only if Bridge runs on a different machine on your LAN (e.g. a homelab box) and you're pointing this client at it.",
   "imap_host": "127.0.0.1",
+
+  "_doc_imap_port": "Local IMAP port. Default 1143. If you've changed it, look it up in Bridge -> Settings -> Advanced -> Mail Connection Settings.",
   "imap_port": 1143,
+
+  "_doc_smtp_port": "Local SMTP port. Default 1025. Same place as IMAP port in Bridge -> Settings -> Advanced.",
   "smtp_port": 1025,
+
+  "_doc_from": "Address that appears in the From: header of outgoing mail. Usually the same as `username`, but Bridge also accepts any alias configured on your Proton account (e.g. alias@yourdomain.com). Reply and forward honor this too.",
   "from": "you@proton.me",
+
+  "_doc_signature": "Optional. Raw HTML appended to every outgoing message — send, reply, and forward. Supports inline images via base64 data URIs, hyperlinks, and formatted text. Set to \"\" for no signature.",
   "signature": ""
 }

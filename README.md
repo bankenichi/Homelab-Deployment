@@ -19,6 +19,20 @@ A massive 31-tool integration for the Proton privacy ecosystem, allowing your AI
 * **Format & Compatibility:** Ships as a convenient `.mcpb` bundle for instant configuration within Claude Desktop, or can be run completely standalone via Python or Node for native OpenCode integration.
 * **Secure Credential Storage:** Credentials are never committed to version control. They are kept as .env variables, or stored locally and securely in either a `.env` file (excluded via gitignore) or a `bridge.json` file located in your user profile at `~/.proton-mcp/`.
 
+### 3. Skills (.agents/skills/)
+Local-AI skills auto-loaded by OpenCode, Claude Code, and other MCP-aware runners. Each skill is a SKILL.md plus optional helper files loaded on demand.
+
+* **brainstorming:** Gates implementation skills behind a written, user-approved design spec; turns vague ideas into actionable specs via collaborative dialogue.
+find-skills — discovers and installs skills from the skills.sh registry with install-count + security-audit vetting.
+* **Frontend-design:** Opinionated frontend builder that pushes for distinctive aesthetic choices and explicitly avoids generic "AI slop" defaults.
+* **Proton-mail:** Drives the proton-mcp server: 31 tools for Proton Mail, Pass, Drive, and VPN status.
+requesting-code-review — dispatches a code-reviewer subagent with crafted context after tasks complete or before merges.
+* **Systematic-debugging:** Enforces root-cause investigation before any fix; iron law: no fixes without diagnosis first.
+* **Ui-ux-pro-max:** Deep design reference: 50+ styles, 161 palettes, 57 font pairings, 99 UX guidelines across 10 frameworks.
+* **using-superpowers:** Bootstrap skill that establishes the skill-discovery protocol at session start.
+
+See .agents/README.md for the full table and skill-authoring guide.
+
 ## Core Infrastructure
 
 * **Prettified Local DNS Routing:** No more typing IP addresses or port numbers. The deployment script automatically configures your Windows hosts file and a Caddy reverse proxy.
@@ -105,3 +119,7 @@ Docker compose failed to boot the container stack. If Caddy fails, it is almost 
     <img src="https://raw.githubusercontent.com/bankenichi/Monogram-Logo-Generator/main/kofi%20logo.png" alt="Support me on Ko-fi" height="120">
   </a>
 </div>
+
+
+
+All bundled skills are open-source — MIT for brainstorming, using-superpowers, requesting-code-review, systematic-debugging, find-skills, ui-ux-pro-max, and proton-mail; Apache 2.0 for frontend-design (its LICENSE.txt ships in the skill folder). The .agents/.skill-lock.json file records each skill's upstream repo for provenance.

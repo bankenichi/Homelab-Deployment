@@ -2,8 +2,8 @@
   "manifest_version": "0.2",
   "name": "proton",
   "display_name": "Proton Mail",
-  "version": "1.0.12",
-  "description": "Proton Mail, Pass, Drive, and VPN access via Proton Bridge",
+  "version": "1.0.13",
+  "description": "Proton Mail, Pass, Drive, and VPN access via the Proton Bridge desktop app. 31 tools across IMAP/SMTP mail, pass-cli credentials, rclone-backed Proton Drive, and an IP-based VPN status check.",
   "author": {
     "name": "jorgenclaw",
     "url": "https://github.com/jorgenclaw/proton-mcp"
@@ -37,47 +37,47 @@
     "bridge_host": {
       "type": "string",
       "title": "Bridge Host",
-      "description": "Proton Bridge host address. Default 127.0.0.1.",
+      "description": "Host where Proton Bridge is running. Almost always 127.0.0.1 — Bridge listens on localhost by default. Change only if you run Bridge on a different machine on your LAN (e.g. a homelab box) and point this client at it.",
       "required": true,
       "default": "127.0.0.1"
     },
     "imap_port": {
       "type": "string",
       "title": "IMAP Port",
-      "description": "Proton Bridge IMAP port. Default 1143.",
+      "description": "Local IMAP port exposed by Proton Bridge. Default is 1143. If you've changed it, look it up in Bridge → Settings → Advanced → Mail Connection Settings.",
       "required": true,
       "default": "1143"
     },
     "smtp_port": {
       "type": "string",
       "title": "SMTP Port",
-      "description": "Proton Bridge SMTP port. Default 1025.",
+      "description": "Local SMTP port exposed by Proton Bridge. Default is 1025. Same place as IMAP port — Bridge → Settings → Advanced → Mail Connection Settings.",
       "required": true,
       "default": "1025"
     },
     "bridge_user": {
       "type": "string",
       "title": "Proton Email",
-      "description": "Your full Proton account email (e.g. you@proton.me).",
+      "description": "Your full Proton account email (e.g. you@proton.me, you@protonmail.com, or your custom-domain Proton address). This is the account Bridge is signed into.",
       "required": true
     },
     "bridge_pass": {
       "type": "string",
-      "title": "Bridge Password",
-      "description": "Bridge-generated password from Proton Bridge Settings (NOT your Proton account password).",
+      "title": "Bridge App Password",
+      "description": "The per-app password Bridge generated for you — NOT your Proton account password. Get it from Bridge → your account → Mailbox details → IMAP/SMTP password. It looks like a random 16-character string. Stored encrypted by Claude Desktop's secret store.",
       "required": true,
       "sensitive": true
     },
     "bridge_from": {
       "type": "string",
       "title": "From Email",
-      "description": "Email address to send messages from (usually the same as Proton Email).",
+      "description": "Address that appears in the From: header of mail you send. Usually the same as Proton Email, but Bridge also accepts any alias you have configured on your Proton account (e.g. alias@yourdomain.com). Replies and forwards honor this too.",
       "required": true
     },
     "signature": {
       "type": "string",
       "title": "Email Signature (HTML)",
-      "description": "Paste raw HTML for your email signature. Supports inline images (base64 src), hyperlinks, and formatted text. Appended automatically to every outgoing message.",
+      "description": "Optional. Raw HTML appended to every outgoing message — send, reply, and forward. Supports inline images via base64 data URIs, hyperlinks, and formatted text. Leave blank for no signature. If you set both an HTML signature here and send a plain-text body, the body is auto-promoted to HTML so the signature renders correctly.",
       "required": false,
       "default": ""
     }
