@@ -486,21 +486,44 @@ if (Get-Command huggingface-cli -ErrorAction SilentlyContinue) {
 
 Write-Host "LLama.cpp deployment complete." -ForegroundColor Green
 
-# === 12. GENERATE RUN-LLAMA COMMAND & CONFIG ===
+# # === 12. GENERATE RUN-LLAMA COMMAND & CONFIG ===
 Write-Host "Creating global run-llama command and external configuration file..." -ForegroundColor Cyan
 
 $llamaArgsFile = "$llamaInstallDir\llama-args.txt"
+$llamaWrapperScript = "$llamaInstallDir\run-llama.ps1"
 $llamaCmdWrapper = "$llamaInstallDir\run-llama.cmd"
 
-# Write initial args file — edit this file to change llama-server launch parameters
-$initialArgs = '--n-gpu-layers 999 --no-mmap --cache-type-k turbo4 --cache-type-v turbo3 --jinja -c 262144 --mlock --n-cpu-moe 28 --context-shift --keep -1 -np 1 --port 8081 --spec-type mtp --spec-draft-n-max 2 -m "C:\Program Files\llamacpp\Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-I-Compact.gguf" --mmproj "C:\Program Files\llamacpp\mmproj.gguf"'
+
+# Write the initial args file. This is the only file users need to edit to change
+# llama-server launch parameters. Keep all args on a single line.
+$initialArgs = '--n-gpu-layers 999 --no-mmap --cache-type-k turbo4 --cache-type-v turbo3 --jinja -c 262144 --mlock --n-cpu-moe 28 --context-shift --keep -1 -np 1 --port 8081 --spec-type mtp --spec-draft-n-max 2 -m "' + $llamaInstallDir + '\Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-I-Compact.gguf" --mmproj "' + $llamaInstallDir + '\mmproj.gguf"'
 Set-Content -Path $llamaArgsFile -Value $initialArgs -Force
 
-# FIX 2: Use a .cmd wrapper instead of .ps1 to avoid PowerShell execution policy issues.
-# llama-server reads arguments via --args-file; the .cmd passes the file path explicitly.
-# Users simply type 'run-llama' in any terminal — no execution policy workarounds needed.
-$cmdContent = "@echo off`r`n`"C:\Program Files\llamacpp\llama-server.exe`" --args-file `"C:\Program Files\llamacpp\llama-args.txt`""
+# The .ps1 wrapper reads llama-args.txt and correctly parses quoted paths (e.g. paths
+# with spaces) before passing them to llama-server. CMD cannot reliably do this parsing,
+# which is why a PowerShell wrapper is required rather than a pure .cmd solution.
+$wrapperContent = @"
+`$exePath = "$llamaInstallDir\llama-server.exe"
+`$argsFile = "$llamaInstallDir\llama-args.txt"
+if (!(Test-Path `$argsFile)) { Write-Error "Config not found: `$argsFile"; exit 1 }
+`$argsText = (Get-Content `$argsFile -Raw).Trim()
+`$argsList = [regex]::Matches(`$argsText, '(?:"[^"]*"|[^\s]+)') | ForEach-Object { `$_.Value }
+Write-Host "Booting llama-server..." -ForegroundColor Cyan
+& `$exePath @argsList
+"@
+Set-Content -Path $llamaWrapperScript -Value $wrapperContent -Force
+
+# The .cmd shim exists solely to bypass PowerShell execution policy restrictions.
+# Without it, typing 'run-llama' in a fresh terminal would fail on systems where
+# .ps1 execution is disabled. The .cmd is what PATH resolves 'run-llama' to.
+$cmdContent = "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$llamaWrapperScript`""
 Set-Content -Path $llamaCmdWrapper -Value $cmdContent -Force
+
+# Unblock both files so Windows doesn't prompt users to confirm execution.
+# Files written by a script that originated from the internet inherit a Zone.Identifier
+# alternate data stream marking them as untrusted — Unblock-File removes that mark.
+Unblock-File -Path $llamaWrapperScript
+Unblock-File -Path $llamaCmdWrapper
 
 Write-Host "run-llama configured successfully." -ForegroundColor Green
 
