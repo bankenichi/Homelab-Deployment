@@ -12,19 +12,19 @@
         }
       },
       "models": {
-        "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-I-Compact": {
-          "name": "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-I-Compact"
+        "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-I-Compact": {
+          "name": "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-I-Compact"
         }
       }
     }
   },
-  "model": "llama.cpp/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-I-Compact",
+  "model": "llama.cpp/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-I-Compact",
   "mcp": {
     "coding-assistant": {
       "type": "local",
       "command": [
         "python",
-        "C:\\Users\\kenic\\Documents\\Homelab\\mcp-server\\mcp_server.py"
+        "..\\..\\mcp-server\\mcp_server.py"
       ],
       "enabled": true
     },
@@ -32,7 +32,7 @@
       "type": "local",
       "command": [
         "python",
-        "C:\\Users\\kenic\\Documents\\Homelab\\proton-mcp\\proton_mcp.py"
+        "..\\..\\proton-mcp\\proton_mcp.py"
       ],
       "enabled": true
     }

@@ -1,6 +1,6 @@
 # === 1. CONFIGURATION & DYNAMIC PATHING ===
 $scriptDir = $PSScriptRoot
-$repoUrl = "https://github.com/bankenichi/Homelab-searxng-plus-proxy" # Update this to your actual repo URL
+$repoUrl = "https://github.com/bankenichi/Homelab-Deployment"
 $isStandalone = $false
 
 # Post-reboot resume state
@@ -365,6 +365,29 @@ if (Test-Path "$scriptDir\.git") {
 }
 
 Write-Host "Repository is ready at $targetDir." -ForegroundColor Green
+
+# === 8b. INSTALL PYTHON DEPS FOR MCP SERVERS ===
+Write-Host "Installing Python dependencies for MCP servers..." -ForegroundColor Cyan
+$codingMcpReq = "$targetDir\mcp-server\requirements.txt"
+$protonMcpReq = "$targetDir\proton-mcp\requirements.txt"
+
+if (Test-Path $codingMcpReq) {
+    $LASTEXITCODE = 0
+    pip install -r $codingMcpReq
+    if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to install Python deps for mcp-server ($codingMcpReq)." }
+} else {
+    Write-Warning "Missing $codingMcpReq — skipping mcp-server dependency install."
+}
+
+if (Test-Path $protonMcpReq) {
+    $LASTEXITCODE = 0
+    pip install -r $protonMcpReq
+    if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to install Python deps for proton-mcp ($protonMcpReq)." }
+} else {
+    Write-Warning "Missing $protonMcpReq — skipping proton-mcp dependency install."
+}
+
+Write-Host "Python MCP dependencies installed." -ForegroundColor Green
 
 # === 9. CONFIGURE OPENCODE SYMLINKS ===
 Write-Host "Configuring OpenCode symlinks..." -ForegroundColor Cyan

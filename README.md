@@ -36,9 +36,27 @@ See .agents/README.md for the full table and skill-authoring guide.
 ## Core Infrastructure
 
 * **Prettified Local DNS Routing:** No more typing IP addresses or port numbers. The deployment script automatically configures your Windows hosts file and a Caddy reverse proxy.
-* **Local LLM Server (Llama.cpp):** Automatically downloads and configures a highly optimized, local instance of Llama.cpp. The deployment includes pre-configured server flags fine-tuned for high-throughput inference, accessible globally via the `run-llama` command.
+* **Local LLM Server (Llama.cpp):** Clones [llamacpp-turboquant-mtp-executables-for-cuda-12.8](https://github.com/bankenichi/llamacpp-turboquant-mtp-executables-for-cuda-12.8) to `C:\Program Files\llamacpp`, pulls the [llama-config-ui](https://github.com/bankenichi/llama-config-ui) submodule, downloads pinned GGUF weights via Hugging Face, and installs a global `run-llama` command (OpenAI API on port **8081**). See `llama/README.md` for the full map.
 * **Agentic CLI (OpenCode):** Seamlessly installs Node.js and the `opencode-ai` CLI. The script automatically creates robust symlinks, mapping your local `.agents` and `opencode` configurations directly into the repository for safe version control.
 * **SearXNG & Daily Logo Rotator:** A private, local search engine that stays fresh. A lightweight background container automatically picks a random image from your `logos` folder and applies it via an atomic file swap every 24 hours. (Think Google Doodles)
+
+## Runtime layout (how the pieces connect)
+
+```
+Deploy-Homelab.ps1
+        │
+        ├─ git clone/pull → C:\Program Files\llamacpp  (llamacpp-turboquant… executables repo)
+        ├─ submodule     → …\llama-config-ui          (added to PATH)
+        ├─ installs      → run-llama / llama-ui       (CLI wrappers)
+        ├─ downloads     → *.gguf + mmproj.gguf       (into install dir)
+        └─ writes        → llama-args.txt             (server flags)
+
+run-llama  →  llama-server.exe  :8081  (OpenAI-compatible /v1)
+llama-ui   →  opens the llama-config-ui WebUI (edits llama-args.txt)
+
+OpenCode (opencode.json)  →  http://127.0.0.1:8081/v1
+mcp-server web_search     →  http://localhost:8080 (SearXNG via http://find)
+```
 
 ## Installation & Deployment
 
