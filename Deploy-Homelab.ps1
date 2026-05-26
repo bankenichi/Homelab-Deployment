@@ -7,7 +7,15 @@ $isStandalone = $false
 $resumeUserFile = "C:\ProgramData\HomelabBootstrap\resume-user.txt"
 
 # Llama.cpp & Model Config
-$llamaInstallDir = "C:\Program Files\llamacpp"
+# $llamaInstallDir defaults to C:\Program Files\llamacpp but honors a pre-set LLAMACPP_ROOT
+# env var if present — useful for putting the 20+ GB GGUF weights on a non-system drive.
+# IMPORTANT: the override must be persisted at User or Machine scope BEFORE running this
+# script. A transient `$env:LLAMACPP_ROOT = ...` set in the same shell will NOT survive the
+# UAC self-elevation below (the elevated process reads env vars fresh from the registry).
+# See the README "Optional: Installing llama.cpp to a different drive" section for the exact
+# command. The resolved value is persisted back to machine scope later (section 11), so any
+# subsequent run picks it up automatically without re-setting.
+$llamaInstallDir = if ($env:LLAMACPP_ROOT) { $env:LLAMACPP_ROOT } else { "C:\Program Files\llamacpp" }
 $llamaRepoUrl = "https://github.com/bankenichi/llamacpp-turboquant-mtp-executables-for-cuda-12.8"
 $llamaModelRepo = "mudler/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-GGUF"
 $llamaModelFile = "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-I-Compact.gguf"
@@ -389,6 +397,23 @@ if (Test-Path $protonMcpReq) {
 
 Write-Host "Python MCP dependencies installed." -ForegroundColor Green
 
+# === 8c. SET HOMELAB_ROOT ENVIRONMENT VARIABLE ===
+# opencode.json references this path via {env:HOMELAB_ROOT} for its MCP server commands,
+# so wherever this repo lives on disk, opencode can find mcp-server and proton-mcp without
+# any hard-coded absolute paths. Forward slashes keep the value portable across shells and
+# safe to drop into JSON without escaping backslashes.
+Write-Host "Setting HOMELAB_ROOT environment variable..." -ForegroundColor Cyan
+$homelabRoot = ($targetDir -replace '\\', '/')
+$currentHomelabRoot = [Environment]::GetEnvironmentVariable("HOMELAB_ROOT", [EnvironmentVariableTarget]::Machine)
+if ($currentHomelabRoot -ne $homelabRoot) {
+    [Environment]::SetEnvironmentVariable("HOMELAB_ROOT", $homelabRoot, [EnvironmentVariableTarget]::Machine)
+    Write-Host "HOMELAB_ROOT set to '$homelabRoot' (machine scope)." -ForegroundColor Green
+} else {
+    Write-Host "HOMELAB_ROOT already set to '$homelabRoot'. Skipping." -ForegroundColor DarkGray
+}
+# Mirror into the current process so any subsequent step in this run sees it without a reboot.
+$env:HOMELAB_ROOT = $homelabRoot
+
 # === 9. CONFIGURE OPENCODE SYMLINKS ===
 Write-Host "Configuring OpenCode symlinks..." -ForegroundColor Cyan
 
@@ -445,6 +470,19 @@ Write-Host "System configuration complete. Proceeding with application deploymen
 
 # === 11. DEPLOY LLAMACPP & LOCAL MODELS ===
 Write-Host "=== DEPLOYING LLAMACPP ===" -ForegroundColor Cyan
+
+# Persist LLAMACPP_ROOT to machine scope so downstream tools (and future runs of this script)
+# can locate the install dir without re-deriving it. Mirrors the HOMELAB_ROOT pattern from
+# section 8c. Idempotent — only writes if the resolved value differs from what's already set.
+$currentLlamacppRoot = [Environment]::GetEnvironmentVariable("LLAMACPP_ROOT", [EnvironmentVariableTarget]::Machine)
+if ($currentLlamacppRoot -ne $llamaInstallDir) {
+    [Environment]::SetEnvironmentVariable("LLAMACPP_ROOT", $llamaInstallDir, [EnvironmentVariableTarget]::Machine)
+    Write-Host "LLAMACPP_ROOT set to '$llamaInstallDir' (machine scope)." -ForegroundColor Green
+} else {
+    Write-Host "LLAMACPP_ROOT already set to '$llamaInstallDir'. Skipping." -ForegroundColor DarkGray
+}
+$env:LLAMACPP_ROOT = $llamaInstallDir
+
 if (Test-Path $llamaInstallDir) {
     if (Test-Path "$llamaInstallDir\.git") {
         Write-Host "Directory $llamaInstallDir already exists and is a git repo. Pulling latest updates..." -ForegroundColor Yellow
@@ -704,12 +742,16 @@ Write-Host "2. OPENCODE-AI (Agentic CLI)" -ForegroundColor Cyan
 Write-Host "   Your system configs were automatically backed up and symlinked to your repo." -ForegroundColor Gray
 Write-Host "   - To Run: Open any terminal and type 'opencode'" -ForegroundColor White
 Write-Host "   * Edit Agents/Skills in: $targetDir\opencode and skills" -ForegroundColor DarkGray
+Write-Host "   * HOMELAB_ROOT env var (machine scope) = $homelabRoot" -ForegroundColor DarkGray
+Write-Host "     Referenced by opencode.json as {env:HOMELAB_ROOT} for MCP server paths." -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "3. LLAMA.CPP (Local LLM Server)" -ForegroundColor Cyan
 Write-Host "   Executables, models, and a global launch command were installed." -ForegroundColor Gray
 Write-Host "   - To Run: Open any terminal and type 'run-llama'" -ForegroundColor White
-Write-Host "   * Edit Server Flags in: C:\Program Files\llamacpp\llama-args.txt" -ForegroundColor DarkGray
-Write-Host "   * Update Executables:  cd into C:\Program Files\llamacpp and run 'git pull'" -ForegroundColor DarkGray
+Write-Host "   * Edit Server Flags in: $llamaInstallDir\llama-args.txt" -ForegroundColor DarkGray
+Write-Host "   * Update Executables:  cd into $llamaInstallDir and run 'git pull'" -ForegroundColor DarkGray
+Write-Host "   * LLAMACPP_ROOT env var (machine scope) = $llamaInstallDir" -ForegroundColor DarkGray
+Write-Host "     To relocate llama.cpp on a future redeploy, pre-set this env var; see README." -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "4. SYSTEM DEPENDENCIES INSTALLED" -ForegroundColor Cyan
 Write-Host "   - WSL2: Windows Subsystem for Linux, required as the backend for Docker containers." -ForegroundColor Gray

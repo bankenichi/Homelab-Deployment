@@ -36,8 +36,8 @@ See .agents/README.md for the full table and skill-authoring guide.
 ## Core Infrastructure
 
 * **Prettified Local DNS Routing:** No more typing IP addresses or port numbers. The deployment script automatically configures your Windows hosts file and a Caddy reverse proxy.
-* **Local LLM Server (Llama.cpp):** Clones [llamacpp-turboquant-mtp-executables-for-cuda-12.8](https://github.com/bankenichi/llamacpp-turboquant-mtp-executables-for-cuda-12.8) to `C:\Program Files\llamacpp`, pulls the [llama-config-ui](https://github.com/bankenichi/llama-config-ui) submodule, downloads pinned GGUF weights via Hugging Face, and installs a global `run-llama` command (OpenAI API on port **8081**). See `llama/README.md` for the full map.
-* **Agentic CLI (OpenCode):** Seamlessly installs Node.js and the `opencode-ai` CLI. The script automatically creates robust symlinks, mapping your local `.agents` and `opencode` configurations directly into the repository for safe version control.
+* **Local LLM Server (Llama.cpp):** Clones [llamacpp-turboquant-mtp-executables-for-cuda-12.8](https://github.com/bankenichi/llamacpp-turboquant-mtp-executables-for-cuda-12.8) to `C:\Program Files\llamacpp` by default, pulls the [llama-config-ui](https://github.com/bankenichi/llama-config-ui) submodule, downloads pinned GGUF weights via Hugging Face, and installs a global `run-llama` command (OpenAI API on port **8081**). The install location is overridable via the `LLAMACPP_ROOT` environment variable (see optional install step below) — useful if you'd rather keep the 20+ GB of GGUF weights off your system drive. See `llama/README.md` for the full map.
+* **Agentic CLI (OpenCode):** Seamlessly installs Node.js and the `opencode-ai` CLI. The script automatically creates robust symlinks, mapping your local `.agents` and `opencode` configurations directly into the repository for safe version control. It also sets a machine-scope `HOMELAB_ROOT` environment variable pointing at the deployed repo, which `opencode.json` references via `{env:HOMELAB_ROOT}` so MCP server paths stay portable across machines (no hard-coded user profiles or drive letters).
 * **SearXNG & Daily Logo Rotator:** A private, local search engine that stays fresh. A lightweight background container automatically picks a random image from your `logos` folder and applies it via an atomic file swap every 24 hours. (Think Google Doodles)
 
 ## Runtime layout (how the pieces connect)
@@ -45,7 +45,7 @@ See .agents/README.md for the full table and skill-authoring guide.
 ```
 Deploy-Homelab.ps1
         │
-        ├─ git clone/pull → C:\Program Files\llamacpp  (llamacpp-turboquant… executables repo)
+        ├─ git clone/pull → %LLAMACPP_ROOT%             (default: C:\Program Files\llamacpp)
         ├─ submodule     → …\llama-config-ui          (added to PATH)
         ├─ installs      → run-llama / llama-ui       (CLI wrappers)
         ├─ downloads     → *.gguf + mmproj.gguf       (into install dir)
@@ -55,8 +55,12 @@ run-llama  →  llama-server.exe  :8081  (OpenAI-compatible /v1)
 llama-ui   →  opens the llama-config-ui WebUI (edits llama-args.txt)
 
 OpenCode (opencode.json)  →  http://127.0.0.1:8081/v1
+                          →  {env:HOMELAB_ROOT}/mcp-server     (coding-assistant MCP)
+                          →  {env:HOMELAB_ROOT}/proton-mcp     (proton suite MCP)
 mcp-server web_search     →  http://localhost:8080 (SearXNG via http://find)
 ```
+
+The script publishes two machine-scope environment variables you can use to locate things from anywhere on the system: `HOMELAB_ROOT` (forward-slashed path to this repo, referenced by `opencode.json` for MCP server paths) and `LLAMACPP_ROOT` (path to the llama.cpp install dir, default `C:\Program Files\llamacpp`). `LLAMACPP_ROOT` is overridable — set it before deploy to choose a non-default install location.
 
 ## Installation & Deployment
 
@@ -72,6 +76,28 @@ This stack is designed to be highly portable and deployable on completely bare-m
    * **Excalidraw:** Open your browser and navigate to `http://draw/`
    * **Llama.cpp Server:** Open a new terminal window and type `run-llama`
    * **OpenCode CLI:** Open a new terminal window and type `opencode`
+
+### Optional: Installing llama.cpp to a different drive
+
+By default, `Deploy-Homelab.ps1` installs llama.cpp and downloads the GGUF model weights to `C:\Program Files\llamacpp`. The default model alone is ~20 GB and lives next to the executables — combined with any future models you stash there, this can fill a smaller system drive fast. If you'd rather put it on a different drive (e.g. a large data drive), the script honors a pre-set `LLAMACPP_ROOT` environment variable and uses it as the install root for all llama.cpp operations: clone, PATH registration, model downloads, and the generated `run-llama` wrapper.
+
+**This must be done BEFORE you run `Deploy-Homelab.ps1`.** The override has to be persisted at User or Machine scope, not as a transient variable in your current shell — the deploy script triggers a UAC self-elevation, and the elevated process reads environment variables fresh from the registry. A `$env:LLAMACPP_ROOT = "..."` set in your shell will not survive the elevation prompt.
+
+Open an **Administrator PowerShell** prompt and run:
+
+```powershell
+[Environment]::SetEnvironmentVariable("LLAMACPP_ROOT", "D:\AI\llamacpp", [EnvironmentVariableTarget]::Machine)
+```
+
+Replace `D:\AI\llamacpp` with your desired path. The parent directory must exist (or be creatable), but the leaf folder itself will be created by the script if it doesn't exist yet. Then **close that PowerShell window**, open a **new** terminal, and proceed with `Deploy-Homelab.ps1` as normal. The script will detect the override, install llama.cpp at your chosen location, register that path on the system PATH, download the GGUF weights into it, and persist the value into machine scope (so subsequent re-runs pick it up automatically — you don't need to re-set it before every deploy).
+
+To verify the override took effect in a fresh terminal before deploying:
+
+```powershell
+[Environment]::GetEnvironmentVariable("LLAMACPP_ROOT", "Machine")
+```
+
+This should print the path you set. If it's empty, the variable wasn't persisted — repeat the `SetEnvironmentVariable` call above, making sure you're in an Administrator PowerShell session and not a regular one. The same is true if you want to **change** the location later: re-run `SetEnvironmentVariable` with the new path from an admin PowerShell, then re-run `Deploy-Homelab.ps1` (note: this will leave the old install dir in place; remove it manually if you want to reclaim the space).
 
 ### Optional: Installing the Proton MCP in Claude Desktop
 
@@ -111,6 +137,9 @@ The Winget package manager failed to install Git. Run the script again. If it co
 
 **Node.js / npm / OpenCode installation failed**
 Winget or npm failed to pull the required JavaScript dependencies. If Node.js installed but `opencode-ai` failed, the system PATH likely has not refreshed. Close your terminal, open a fresh Administrator PowerShell prompt, and run `npm install -g opencode-ai@latest` manually.
+
+**OpenCode MCP servers fail to spawn (`HOMELAB_ROOT` unresolved)**
+`opencode.json` references `{env:HOMELAB_ROOT}` for the `coding-assistant` and `proton-suite` MCP commands. The deploy script sets this variable at machine scope, but already-open terminals and editors still hold the old empty environment. Close OpenCode and any shell windows that were open before deployment, then relaunch from a fresh terminal. To verify the value is set, run `[Environment]::GetEnvironmentVariable("HOMELAB_ROOT","Machine")` in a new PowerShell window — it should print the forward-slashed path to your Homelab repo. If empty, re-run `Deploy-Homelab.ps1`.
 
 **Python / pip / Hugging Face CLI installation failed**
 Winget failed to install Python 3.14, or Python failed to bootstrap pip. If Python is installed but the Hugging Face CLI failed, open a fresh Administrator PowerShell prompt and run `pip install huggingface_hub[cli] --break-system-packages` manually.

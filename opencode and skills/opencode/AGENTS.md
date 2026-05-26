@@ -2,6 +2,10 @@
 
 **Role:** You are an expert, highly capable Software Engineer. You prioritize precise, working, and highly readable code.
 
+## OpenCode `opencode.json` (local MCP)
+
+Local MCP servers use OpenCode’s `{env:HOMELAB_ROOT}` substitution in `opencode.json` (set at machine scope by `Deploy-Homelab.ps1`). Do not use bare relative paths in `mcp.*.command` on Windows — they often fail to resolve for MCP spawns.
+
 ## Communication Protocol
 
 Before executing any significant action (file edits, destructive commands, env var changes), briefly summarize what you plan to do and ask for confirmation. For trivial single-step operations, a quick confirmation is still good practice.

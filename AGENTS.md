@@ -28,8 +28,8 @@ Homelab/                              — this repo (version-controlled)
 
 | Location | Repository |
 | --- | --- |
-| `C:\Program Files\llamacpp` | `bankenichi/llamacpp-turboquant-mtp-executables-for-cuda-12.8` |
-| `…\llamacpp\llama-config-ui` (submodule) | `bankenichi/llama-config-ui` |
+| `$env:LLAMACPP_ROOT` (default `C:\Program Files\llamacpp`) | `bankenichi/llamacpp-turboquant-mtp-executables-for-cuda-12.8` |
+| `$env:LLAMACPP_ROOT\llama-config-ui` (submodule) | `bankenichi/llama-config-ui` |
 
 See `llama/README.md` for ports, commands, and how OpenCode + SearXNG connect.
 
@@ -37,7 +37,7 @@ See `llama/README.md` for ports, commands, and how OpenCode + SearXNG connect.
 
 | Component | Role | Entry point |
 | --- | --- | --- |
-| **Deploy-Homelab.ps1** | Bare-metal Windows installer: WSL2, Docker, Git, Node/OpenCode, Python/HF CLI, Homelab pull, llama clone, containers, hosts DNS. | run as Administrator |
+| **Deploy-Homelab.ps1** | Bare-metal Windows installer: WSL2, Docker, Git, Node/OpenCode, Python/HF CLI, Homelab pull, llama clone, containers, hosts DNS. Publishes two machine-scope env vars: `HOMELAB_ROOT` (deployed repo path, forward-slashed; referenced by `opencode.json`) and `LLAMACPP_ROOT` (llama.cpp install dir; overridable by pre-setting it before deploy). | run as Administrator |
 | **llamacpp (external)** | Local inference: prebuilt `llama-server`, GGUF models, `run-llama`, optional MTP flags. | `run-llama` → `:8081/v1` |
 | **llama-config-ui (external)** | Browser UI to edit/save `llama-args.txt` profiles for `run-llama`. | submodule under `C:\Program Files\llamacpp` |
 | **proton-mcp** | 31-tool MCP server giving an AI access to the user's Proton Mail, Pass, Drive, and VPN. | `proton-mcp/index.js` (Node) or `proton-mcp/proton_mcp.py` (Python) |
@@ -68,7 +68,7 @@ See `llama/README.md` for ports, commands, and how OpenCode + SearXNG connect.
         │              │ SearXNG (Docker) │◄──── http://find
  llama-config-ui       └──────────────────┘     http://draw → Excalidraw
  (edits llama-args.txt)
- External: C:\Program Files\llamacpp (+ submodule)
+ External: $env:LLAMACPP_ROOT (default C:\Program Files\llamacpp) + submodule
 ```
 
 The user's local AI talks MCP to both servers in the same session. Skills in `.agents/skills/` tell the AI *when* to reach for which tool — for example, `proton-mail/SKILL.md` says "if the user mentions email or passwords, use the `mail__*` and `pass__*` tools."
@@ -80,7 +80,7 @@ Things that hold true in every component. Match these or call out a deliberate e
 1. **Tool names use `<subsystem>__<snake_case>`.** (`mail__get_unread`, `pass__list_items`, `drive__upload`, etc.) Two underscores between subsystem and action.
 2. **Errors return `{"error": "..."}` strings, not raised exceptions.** The MCP wire protocol surfaces raw exceptions awkwardly.
 3. **Large outputs truncate at 50,000 chars** with a `...[SYSTEM WARNING: CONTENT TRUNCATED FOR LENGTH]...` marker.
-4. **Config self-discovers when possible.** Servers walk a chain (env vars → `~/.<component>/config.{json,yaml}` → `.env` next to script → cwd `.env`) so the user can stand up a server without host-side config injection. Important for runners like OpenCode that just attach to running servers.
+4. **Config self-discovers when possible.** Servers walk a chain (env vars → `~/.<component>/config.{json,yaml}` → `.env` next to script → cwd `.env`) so the user can stand up a server without host-side config injection. Important for runners like OpenCode that just attach to running servers. Two cross-cutting handles are published by `Deploy-Homelab.ps1` at machine scope: `HOMELAB_ROOT` ("where does the Homelab repo live on this machine", forward-slashed) and `LLAMACPP_ROOT` ("where is llama.cpp installed", overridable by pre-setting before deploy; defaults to `C:\Program Files\llamacpp`). Reference them as `{env:HOMELAB_ROOT}` in JSON configs, `$env:HOMELAB_ROOT` in PowerShell, `os.environ["HOMELAB_ROOT"]` in Python — never hard-code absolute paths to repo contents or to the llama install dir.
 5. **No secrets in repo.** `.gitignore` excludes `.env`. Anything matching the original maintainer's identifiers (`kenic`, `bankenichi`, `ifritcr`, `gabriel.hernandez`, the bridge app password `0muVpgV1xfbXRn0zAwJHhw`) is contamination and should be stripped before any redistribution.
 6. **Skills are open-source artifacts** — see `.agents/NOTICES.md` for per-skill licenses. Don't bundle a skill into a redistributable without including its license.
 7. **`AGENTS.md` is the universal agent-instruction file.** Every component has one. Recognized by Claude Code, Cursor, Codex, etc.

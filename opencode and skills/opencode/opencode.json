@@ -24,7 +24,7 @@
       "type": "local",
       "command": [
         "python",
-        "..\\..\\mcp-server\\mcp_server.py"
+        "{env:HOMELAB_ROOT}/mcp-server/mcp_server.py"
       ],
       "enabled": true
     },
@@ -32,7 +32,7 @@
       "type": "local",
       "command": [
         "python",
-        "..\\..\\proton-mcp\\proton_mcp.py"
+        "{env:HOMELAB_ROOT}/proton-mcp/proton_mcp.py"
       ],
       "enabled": true
     }
