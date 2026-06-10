@@ -12,7 +12,11 @@ import pdfplumber
 import psutil
 import requests
 from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
+try:
+    # New package name (the project renamed duckduckgo-search -> ddgs).
+    from ddgs import DDGS
+except ImportError:  # fall back to the legacy package if only it is installed
+    from duckduckgo_search import DDGS
 
 from mcp.server.fastmcp import FastMCP
 

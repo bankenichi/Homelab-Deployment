@@ -1,0 +1,135 @@
+# ============================================================================
+# docker-compose.vpn.yml — VPN-ROUTED variant of the SearXNG stack.
+# ----------------------------------------------------------------------------
+# This is a COMPLETE, standalone stack definition (NOT a docker-compose.yml
+# override layer). It routes ALL of SearXNG's outbound traffic through a Proton
+# VPN US node so Google stops 403-ing image search.
+#
+# It is NOT used by default. The base `docker-compose.yml` runs SearXNG WITHOUT
+# a VPN and works on its own. Opt in with the helper:
+#
+#     ..\Enable-SearxngVpn.ps1            # writes vpn.env, switches to this file
+#     ..\Enable-SearxngVpn.ps1 -Disable   # reverts to the base (no-VPN) stack
+#
+# Or manually (same `name:` ⇒ same project & volumes as the base stack):
+#     docker compose -f docker-compose.yml down
+#     docker compose -f docker-compose.vpn.yml up -d
+#
+# Requires searxng/vpn.env with a Proton WIREGUARD_PRIVATE_KEY (gitignored).
+# Full design + troubleshooting: VPN-EGRESS.md.
+# ============================================================================
+name: searxng
+
+services:
+  # ---------------------------------------------------------------------------
+  # gluetun: VPN egress gateway. Holds a WireGuard tunnel to a Proton VPN US
+  # server. `core` shares this container's network namespace, so ALL
+  # of SearXNG's outbound traffic (engine scraping included) exits via the US
+  # node, while the rest of the host stays on the normal connection. The SearXNG
+  # web UI is published HERE (not on `core`).
+  # ---------------------------------------------------------------------------
+  gluetun:
+    container_name: searxng-gluetun
+    image: qmcgaw/gluetun:latest
+    restart: always
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      # SearXNG web UI — published on the gateway, reaches `core` over localhost.
+      - ${SEARXNG_HOST:+${SEARXNG_HOST}:}${SEARXNG_PORT:-8080}:${SEARXNG_PORT:-8080}
+    env_file:
+      - ./vpn.env          # WIREGUARD_PRIVATE_KEY (secret, gitignored)
+    environment:
+      # Proton provider mode: gluetun picks a working US WireGuard server from its
+      # built-in list — only the private key (in vpn.env) is required.
+      VPN_SERVICE_PROVIDER: protonvpn
+      VPN_TYPE: wireguard
+      SERVER_COUNTRIES: United States
+      WIREGUARD_ADDRESSES: 10.2.0.2/32   # from the Proton conf [Interface] Address
+      # Pin a low tunnel MTU. WSL2's path-MTU discovery fails ("PMTUD failed"),
+      # so larger packets time out while small ones succeed. 1320 avoids that.
+      WIREGUARD_MTU: 1320
+      # Allow LAN clients to reach the published UI port (adjust to your subnet).
+      FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNET:-192.168.0.0/16,172.16.0.0/12,10.0.0.0/8}
+      TZ: ${TZ:-America/Costa_Rica}
+
+  core:
+    container_name: searxng-core
+    image: docker.io/searxng/searxng:${SEARXNG_VERSION:-latest}
+    restart: always
+    mem_limit: 256m
+    # Route every request through the VPN gateway. NOTE: no `ports:` here — the
+    # port is published on `gluetun` above.
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    env_file: ./.env
+    volumes:
+      - ./core-config/:/etc/searxng/:Z
+      - core-data:/var/cache/searxng/
+      # Base overrides
+      - ./custom.css:/usr/local/searxng/searx/static/themes/simple/css/custom.css:ro
+      - ./base.html:/usr/local/searxng/searx/templates/simple/base.html:ro
+      # The Native Linux Volume mapped directly to the whitelisted img folder
+      - searxng-img-data:/usr/local/searxng/searx/static/themes/simple/img:rw
+
+  logo-rotator:
+    image: alpine:latest
+    restart: unless-stopped
+    mem_limit: 64m
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/data:ro
+      - searxng-img-data:/native-img:rw
+    command: >
+      /bin/sh -c "
+      apk add --no-cache bash docker-cli &&
+      exec bash -c '
+      while true; do
+        files=(/data/logos/*.png);
+        random_file=$${files[$$RANDOM % $${#files[@]}]};
+        cp -f \"$$random_file\" /native-img/searxng.png;
+        chmod 644 /native-img/searxng.png;
+        echo \"Rotated logo to $$(basename \"$$random_file\")\";
+        docker restart searxng-core;
+        sleep 86400;
+      done'"
+
+  vpn-rotator:
+    # Self-contained VPN exit-IP rotator. Every VPN_ROTATE_INTERVAL seconds it
+    # restarts gluetun (→ new US server), waits for healthy, then restarts core
+    # (it shares gluetun's netns and would otherwise be stranded).
+    container_name: searxng-vpn-rotator
+    image: docker.io/docker:cli
+    restart: unless-stopped
+    mem_limit: 64m
+    environment:
+      VPN_ROTATE_INTERVAL: ${VPN_ROTATE_INTERVAL:-3600}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "vpn-rotator: will rotate every $${VPN_ROTATE_INTERVAL}s";
+        while true; do
+          sleep "$${VPN_ROTATE_INTERVAL}";
+          echo "vpn-rotator: restarting gluetun to rotate exit IP...";
+          docker restart searxng-gluetun >/dev/null;
+          status="";
+          for i in $$(seq 1 30); do
+            status=$$(docker inspect -f '{{.State.Health.Status}}' searxng-gluetun 2>/dev/null);
+            [ "$$status" = "healthy" ] && break;
+            sleep 3;
+          done;
+          echo "vpn-rotator: gluetun status=$$status; restarting core";
+          docker restart searxng-core >/dev/null;
+          echo "vpn-rotator: rotation complete";
+        done
+
+volumes:
+  core-data:
+  searxng-img-data:

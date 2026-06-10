@@ -1,0 +1,5 @@
+{
+  "models": ["*"],
+  "imageAnalysisTool": "vision_analyze",
+  "promptTemplate": "[IMPORTANT — image attached, follow EXACTLY]\nThe user attached an image. You cannot view it yourself. You MUST call the `{toolName}` tool to read its contents.\n\nImage path(s) — LITERAL. Copy them character-for-character. Do NOT modify, abbreviate, regenerate, or guess UUIDs. Do NOT change folder names (the path contains `opencode-vision`, not `opencode`):\n{imageList}\n\nRules:\n1. Call `{toolName}` ONCE with image_path set to the EXACT path above, verbatim.\n2. The tool's returned text IS the image content. Treat it as ground truth and answer the user from it.\n3. If the first call succeeds, do NOT retry with a different UUID or path.\n4. Do NOT use bash, PowerShell, or any file-listing tool to look for the image — the path above is the real path on disk.\n5. Do NOT dismiss, second-guess, or apologize for the tool's response, even if the description sounds generic. The image really did contain what the tool reported.\n\nUser's request: {userText}"
+}

@@ -1,1 +1,13 @@
-proton-mcp/html signature.txt
+# --- Model weights (large, downloaded by Deploy-Homelab.ps1 / huggingface-cli) ---
+*.gguf
+opencode-vision/*.gguf
+
+# --- Secrets: VPN keys and WireGuard configs (never commit) ---
+searxng/vpn.env
+*.conf
+# (Caddyfile has no extension, so it is NOT matched by *.conf and stays tracked.)
+
+# --- Local-only / personal ---
+.gitignore
+html signature.txt
+

@@ -1,0 +1,10 @@
+--host 127.0.0.1
+--port 8083
+--alias vision-vlm
+--n-gpu-layers 0
+--no-mmproj-offload
+-fa on
+-c 4096
+-b 512
+-np 1
+--mlock

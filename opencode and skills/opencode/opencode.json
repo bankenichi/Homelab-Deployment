@@ -35,6 +35,28 @@
         "{env:HOMELAB_ROOT}/proton-mcp/proton_mcp.py"
       ],
       "enabled": true
+    },
+    "vision": {
+      "type": "local",
+      "command": [
+        "python",
+        "{env:HOMELAB_ROOT}/opencode-vision/mcp/vision_mcp.py"
+      ],
+      "environment": {
+        "HOMELAB_ROOT": "{env:HOMELAB_ROOT}",
+        "VISION_API_BASE": "http://127.0.0.1:8083/v1",
+        "VISION_MODEL": "vision-vlm",
+        "VISION_MAX_TOKENS": "1024",
+        "VISION_TIMEOUT": "180",
+        "VISION_SPAWN_SERVER": "1",
+        "VISION_LLAMA_MODEL": "{env:HOMELAB_ROOT}/opencode-vision/CyberNeurova-Qwen2.5-VL-3B-Instruct-abliterated.Q4_K_M.gguf",
+        "VISION_LLAMA_MMPROJ": "{env:HOMELAB_ROOT}/opencode-vision/CyberNeurova-Qwen2.5-VL-3B-Instruct-abliterated.mmproj-Q8_0.gguf",
+        "VISION_LLAMA_ARGS_FILE": "{env:HOMELAB_ROOT}/opencode-vision/vision-server/vision-args.txt",
+        "VISION_LLAMA_IDLE_TIMEOUT": "300",
+        "VISION_LLAMA_STARTUP_TIMEOUT": "60",
+        "VISION_LLAMA_VISIBLE_CONSOLE": "1"
+      },
+      "enabled": true
     }
   }
 }

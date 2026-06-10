@@ -1,3 +1,16 @@
+# ============================================================================
+# docker-compose.yml — BASE SearXNG stack (NO VPN). This is the default the
+# deploy script boots; it works standalone with no extra configuration.
+#
+# Outbound traffic uses the host's normal connection. Google may occasionally
+# 403 image search from your IP — to route SearXNG through a Proton VPN US node
+# instead, opt in with the helper (it switches to docker-compose.vpn.yml):
+#
+#     ..\Enable-SearxngVpn.ps1            # enable VPN routing
+#     ..\Enable-SearxngVpn.ps1 -Disable   # back to this base stack
+#
+# See VPN-EGRESS.md for the VPN design.
+# ============================================================================
 name: searxng
 
 services:
@@ -6,6 +19,7 @@ services:
     image: docker.io/searxng/searxng:${SEARXNG_VERSION:-latest}
     restart: always
     mem_limit: 256m
+    # No VPN: publish the web UI directly on core, normal Docker networking.
     ports:
       - ${SEARXNG_HOST:+${SEARXNG_HOST}:}${SEARXNG_PORT:-8080}:${SEARXNG_PORT:-8080}
     env_file: ./.env
@@ -17,15 +31,6 @@ services:
       - ./base.html:/usr/local/searxng/searx/templates/simple/base.html:ro
       # The Native Linux Volume mapped directly to the whitelisted img folder
       - searxng-img-data:/usr/local/searxng/searx/static/themes/simple/img:rw
-
-  valkey:
-    container_name: searxng-valkey
-    image: docker.io/valkey/valkey:9-alpine
-    command: valkey-server --save 30 1 --loglevel warning
-    restart: always
-    mem_limit: 128m
-    volumes:
-      - valkey-data:/data/
 
   logo-rotator:
     # Upgrading to Alpine so we can install the Docker CLI
@@ -45,20 +50,19 @@ services:
         # 1. Pick the random logo
         files=(/data/logos/*.png);
         random_file=$${files[$$RANDOM % $${#files[@]}]};
-        
+
         # 2. Overwrite the file inside the native volume
         cp -f \"$$random_file\" /native-img/searxng.png;
         chmod 644 /native-img/searxng.png;
         echo \"Rotated logo to $$(basename \"$$random_file\")\";
-        
+
         # 3. Reboot the SearXNG web server so it is forced to read the new file size
         docker restart searxng-core;
-        
+
         # 4. Sleep for 24 hours
         sleep 86400;
       done'"
 
 volumes:
   core-data:
-  valkey-data:
   searxng-img-data: # Pure volume definition

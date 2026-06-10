@@ -1,5 +1,5 @@
 mcp>=1.0
-duckduckgo-search>=7.0
+ddgs>=9.0
 beautifulsoup4>=4.12
 requests>=2.34
 psutil>=7.0

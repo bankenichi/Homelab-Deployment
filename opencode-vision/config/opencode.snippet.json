@@ -1,0 +1,36 @@
+{
+  "//": "MERGE SOURCE — not a drop-in replacement. Add the `vision` key into the existing",
+  "//1": "`mcp` object in opencode and skills/opencode/opencode.json (keep coding-assistant",
+  "//2": "and proton-suite). The plugin loads directly as a .ts file from opencode/plugins/",
+  "//3": "(see ../plugin/README.md), so no top-level `plugin` array is needed.",
+  "//4": "PORTABILITY: all repo-internal paths use {env:HOMELAB_ROOT} (forward slashes only,",
+  "//5": "matching the existing convention in opencode and skills/opencode/AGENTS.md).",
+  "//6": "LIFECYCLE: vision_mcp.py lazily spawns the :8083 llama-server on first use, idles it",
+  "//7": "down after VISION_LLAMA_IDLE_TIMEOUT seconds, and the OS reaps it on OpenCode exit",
+  "//8": "via a Windows Job Object. Set VISION_SPAWN_SERVER=0 to disable spawn and use an",
+  "//9": "externally-managed server (e.g. vision-server/run-vision.ps1) instead.",
+  "mcp": {
+    "vision": {
+      "type": "local",
+      "command": [
+        "python",
+        "{env:HOMELAB_ROOT}/opencode-vision/mcp/vision_mcp.py"
+      ],
+      "environment": {
+        "HOMELAB_ROOT": "{env:HOMELAB_ROOT}",
+        "VISION_API_BASE": "http://127.0.0.1:8083/v1",
+        "VISION_MODEL": "vision-vlm",
+        "VISION_MAX_TOKENS": "1024",
+        "VISION_TIMEOUT": "180",
+        "VISION_SPAWN_SERVER": "1",
+        "VISION_LLAMA_MODEL": "{env:HOMELAB_ROOT}/opencode-vision/CyberNeurova-Qwen2.5-VL-3B-Instruct-abliterated.Q4_K_M.gguf",
+        "VISION_LLAMA_MMPROJ": "{env:HOMELAB_ROOT}/opencode-vision/CyberNeurova-Qwen2.5-VL-3B-Instruct-abliterated.mmproj-Q8_0.gguf",
+        "VISION_LLAMA_ARGS_FILE": "{env:HOMELAB_ROOT}/opencode-vision/vision-server/vision-args.txt",
+        "VISION_LLAMA_IDLE_TIMEOUT": "300",
+        "VISION_LLAMA_STARTUP_TIMEOUT": "60",
+        "VISION_LLAMA_VISIBLE_CONSOLE": "1"
+      },
+      "enabled": true
+    }
+  }
+}

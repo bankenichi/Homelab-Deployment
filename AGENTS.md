@@ -16,8 +16,9 @@ Homelab/                              — this repo (version-controlled)
 ├── mcp-server/                       — coding-assistant MCP (in-tree here)
 ├── proton-mcp/                       — Proton Mail / Pass / Drive / VPN MCP server
 ├── proxy/                            — Caddy reverse proxy (find, draw)
-├── searxng/                          — private search (http://find → :8080)
+├── searxng/                          — private search (http://find → :8080); opt-in Proton VPN egress
 ├── excalidraw/                       — whiteboard (http://draw → :5000)
+├── opencode-vision/                  — vision MCP + VLM (:8083) giving the local model image understanding
 └── opencode and skills/
     ├── AGENTS.md
     ├── opencode/                     — OpenCode provider + MCP wiring (symlinked to ~/.config/opencode)
@@ -43,7 +44,8 @@ See `llama/README.md` for ports, commands, and how OpenCode + SearXNG connect.
 | **proton-mcp** | 31-tool MCP server giving an AI access to the user's Proton Mail, Pass, Drive, and VPN. | `proton-mcp/index.js` (Node) or `proton-mcp/proton_mcp.py` (Python) |
 | **.agents/skills/** | Registry of small instruction packets ("skills") that teach AI runners when and how to use specific capabilities. Auto-discovered by OpenCode, Claude Code, etc. | individual `SKILL.md` files |
 | **mcp-server** | General-purpose coding-assistant MCP. ~30 tools for web search (SearXNG), file ops, shell, git, formatters, etc. | `mcp-server/mcp_server.py` |
-| **searxng + proxy** | Private search and pretty local hostnames (`find`, `draw`). | `proxy/Caddyfile`, `searxng/docker-compose.yml` |
+| **searxng + proxy** | Private search and pretty local hostnames (`find`, `draw`). VPN egress is opt-in (`Enable-SearxngVpn.ps1` → `searxng/docker-compose.vpn.yml`). | `proxy/Caddyfile`, `searxng/docker-compose.yml` |
+| **opencode-vision** | Gives the local coding model vision: a plugin rewrites pasted images to a `vision_analyze` tool call; the `vision` MCP lazily spawns a dedicated VLM `llama-server` on `:8083` (Qwen2.5-VL-3B, CPU-only) and idles it out. | `opencode-vision/mcp/vision_mcp.py`, `opencode and skills/opencode/plugins/opencode-vision.ts` |
 | **OpenCode** | Agentic CLI; default model provider points at local llama-server. | `opencode and skills/opencode/opencode.json` |
 
 ## How the pieces fit together

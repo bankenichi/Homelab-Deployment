@@ -4,7 +4,7 @@ A fully automated, zero-friction local deployment tailored for Windows. This sta
 
 ## The Model Context Protocol (MCP) Arsenal
 
-This homelab includes two incredibly robust MCP servers, allowing your AI agents (like Claude Desktop or OpenCode) to interact directly with your system, code, and private data securely.
+This homelab includes three robust MCP servers, allowing your AI agents (like Claude Desktop or OpenCode) to interact directly with your system, code, private data, and images securely.
 
 ### 1. Coding Assistant MCP
 A comprehensive system and codebase integration tool designed for local developer agents. It bridges the gap between the AI and your operating system.
@@ -19,7 +19,13 @@ A massive 31-tool integration for the Proton privacy ecosystem, allowing your AI
 * **Format & Compatibility:** Ships as a convenient `.mcpb` bundle for instant configuration within Claude Desktop, or can be run completely standalone via Python or Node for native OpenCode integration.
 * **Secure Credential Storage:** Credentials are never committed to version control. They are kept as .env variables, or stored locally and securely in either a `.env` file (excluded via gitignore) or a `bridge.json` file located in your user profile at `~/.proton-mcp/`.
 
-### 3. Skills (.agents/skills/)
+### 3. Vision MCP
+Gives the local coding model **vision**, which OpenCode's OpenAI-compatible provider otherwise can't deliver (it never forwards pasted images). Two cooperating pieces:
+* **`opencode-vision` plugin** (`plugins/opencode-vision.ts`) — intercepts a pasted image, saves it to a temp file, and rewrites the message to instruct the model to call the `vision_analyze` tool with the path. Loaded raw by OpenCode's Bun runtime — **no build step**.
+* **`vision` MCP server** (`opencode-vision/mcp/vision_mcp.py`) — exposes `vision_analyze`. On first use it **lazily spawns a dedicated `llama-server` on port 8083** running a small VLM (Qwen2.5-VL-3B), forwards the image, returns the text description, and idles the server out after 5 minutes (reaped via a Windows Job Object on exit).
+* **Why a separate server:** the `:8081` coding server runs `--spec-type mtp`, which is incompatible with multimodal input in llama.cpp. Vision is isolated on `:8083` with no MTP. See `opencode-vision/docs/ARCHITECTURE.md`.
+
+### 4. Skills (.agents/skills/)
 Local-AI skills auto-loaded by OpenCode, Claude Code, and other MCP-aware runners. Each skill is a SKILL.md plus optional helper files loaded on demand.
 
 * **brainstorming:** Gates implementation skills behind a written, user-approved design spec; turns vague ideas into actionable specs via collaborative dialogue.
@@ -38,7 +44,8 @@ See .agents/README.md for the full table and skill-authoring guide.
 * **Prettified Local DNS Routing:** No more typing IP addresses or port numbers. The deployment script automatically configures your Windows hosts file and a Caddy reverse proxy.
 * **Local LLM Server (Llama.cpp):** Clones [llamacpp-turboquant-mtp-executables-for-cuda-12.8](https://github.com/bankenichi/llamacpp-turboquant-mtp-executables-for-cuda-12.8) to `C:\Program Files\llamacpp` by default, pulls the [llama-config-ui](https://github.com/bankenichi/llama-config-ui) submodule, downloads pinned GGUF weights via Hugging Face, and installs a global `run-llama` command (OpenAI API on port **8081**). The install location is overridable via the `LLAMACPP_ROOT` environment variable (see optional install step below) — useful if you'd rather keep the 20+ GB of GGUF weights off your system drive. See `llama/README.md` for the full map.
 * **Agentic CLI (OpenCode):** Seamlessly installs Node.js and the `opencode-ai` CLI. The script automatically creates robust symlinks, mapping your local `.agents` and `opencode` configurations directly into the repository for safe version control. It also sets a machine-scope `HOMELAB_ROOT` environment variable pointing at the deployed repo, which `opencode.json` references via `{env:HOMELAB_ROOT}` so MCP server paths stay portable across machines (no hard-coded user profiles or drive letters).
-* **SearXNG & Daily Logo Rotator:** A private, local search engine that stays fresh. A lightweight background container automatically picks a random image from your `logos` folder and applies it via an atomic file swap every 24 hours. (Think Google Doodles)
+* **SearXNG & Daily Logo Rotator:** A private, local search engine that works out of the box (no VPN required). A lightweight background container picks a random image from your `logos` folder and applies it via an atomic file swap every 24 hours (think Google Doodles). **Optional:** if Google starts returning `403` on image search, you can route SearXNG's outbound traffic through a Proton VPN US node by running `Enable-SearxngVpn.ps1` — it switches the stack to a `gluetun`-gated variant with an hourly exit-IP rotator. See "Route SearXNG through Proton VPN (optional)" below.
+* **Local Vision:** The local coding model gains image understanding via the `opencode-vision` plugin + `vision` MCP server, which lazily spawns a dedicated Qwen2.5-VL server on port 8083 when you paste an image. See the Vision MCP section above and `opencode-vision/`.
 
 ## Runtime layout (how the pieces connect)
 
@@ -55,9 +62,11 @@ run-llama  →  llama-server.exe  :8081  (OpenAI-compatible /v1)
 llama-ui   →  opens the llama-config-ui WebUI (edits llama-args.txt)
 
 OpenCode (opencode.json)  →  http://127.0.0.1:8081/v1
-                          →  {env:HOMELAB_ROOT}/mcp-server     (coding-assistant MCP)
-                          →  {env:HOMELAB_ROOT}/proton-mcp     (proton suite MCP)
-mcp-server web_search     →  http://localhost:8080 (SearXNG via http://find)
+                          →  {env:HOMELAB_ROOT}/mcp-server       (coding-assistant MCP)
+                          →  {env:HOMELAB_ROOT}/proton-mcp       (proton suite MCP)
+                          →  {env:HOMELAB_ROOT}/opencode-vision  (vision MCP)
+vision MCP (on demand)    →  spawns llama-server :8083 (Qwen2.5-VL-3B) → idles out after 300s
+mcp-server web_search     →  http://localhost:8080 (SearXNG via http://find; VPN egress optional)
 ```
 
 The script publishes two machine-scope environment variables you can use to locate things from anywhere on the system: `HOMELAB_ROOT` (forward-slashed path to this repo, referenced by `opencode.json` for MCP server paths) and `LLAMACPP_ROOT` (path to the llama.cpp install dir, default `C:\Program Files\llamacpp`). `LLAMACPP_ROOT` is overridable — set it before deploy to choose a non-default install location.
@@ -119,6 +128,53 @@ To add more images to the rotation, simply place any `.png` files into the `sear
 
 **Create Your Own Logos**: Want to design perfect, PNG logos to add to the rotation? Use my **[Monogram Logo Generator](https://github.com/bankenichi/Monogram-Logo-Generator)** to instantly create perfectly sized, transparent background graphics. Just generate them and drop them straight into the `logos` folder!
 
+### Route SearXNG through Proton VPN (optional)
+By default SearXNG runs **without** a VPN and works fine. If Google starts returning `403` on image search from your IP, you can route SearXNG's outbound traffic through a **Proton VPN US node** (a `gluetun` gateway). This is **opt-in** — the deploy never requires it, and bare-metal installs run the no-VPN base.
+
+Setup (one time, requires a paid Proton plan):
+
+1. Log in at **account.protonvpn.com** → **Downloads** → **WireGuard configuration**.
+2. Name it (e.g. `searxng-us`), Platform = **GNU/Linux**, pick any **US** server, click **Create**.
+3. Move the downloaded config into the **repo root** (`C:\...\Homelab\`) and rename it **exactly** `searxng-us.conf` so the command below matches. (Or keep your own name and point `-ConfPath` at it.)
+4. From the repo root, run the helper:
+
+   ```powershell
+   .\Enable-SearxngVpn.ps1 -ConfPath .\searxng-us.conf
+   ```
+
+   It extracts the key, writes `searxng/vpn.env` (gitignored), switches the stack to `docker-compose.vpn.yml`, waits for the tunnel, and prints the US exit IP. You can also pass `-Key "<privatekey>"` directly, or run with neither to be prompted. To revert: `.\Enable-SearxngVpn.ps1 -Disable`.
+
+#### Manual (without the helper)
+The helper just wraps Docker Compose. To do it by hand — useful after a `docker compose down -v`, or if you'd rather not run the script:
+
+```powershell
+# 1. One time: create the secret from your Proton key. The file MUST be named exactly
+#    "vpn.env" and live in the searxng folder (it is gitignored).
+cd C:\Users\kenic\Documents\Homelab\searxng
+Copy-Item vpn.env.example vpn.env          # then edit vpn.env and set WIREGUARD_PRIVATE_KEY=<your key>
+
+# 2. Bring up the VPN-routed stack (the two compose files share the same project,
+#    so this reuses your existing volumes).
+docker compose -f docker-compose.yml down       # stop the base stack if it's running
+docker compose -f docker-compose.vpn.yml up -d
+
+# 3. Verify: gluetun healthy + a US exit IP.
+docker ps
+docker exec searxng-core wget -qO- https://ipinfo.io/ip
+```
+
+If `vpn.env` already exists (e.g. you only ran `down -v`, which keeps files), skip step 1 and just run step 2. To go back to the no-VPN base: `docker compose -f docker-compose.vpn.yml down; docker compose up -d`.
+
+A `vpn-rotator` sidecar restarts the tunnel hourly to cycle the US exit IP (Proton IPs get flagged by Google over time); override the cadence with `-Interval <seconds>` or `VPN_ROTATE_INTERVAL` in `searxng/.env`. The MTU is pinned to `1320` because WSL2's path-MTU discovery is broken — without it the tunnel connects but times out. Full design, verification commands, and troubleshooting: `searxng/VPN-EGRESS.md`.
+
+### Optional: Vision (VISION_* env knobs)
+The `vision` MCP entry in `opencode.json` carries the vision server's configuration. Common knobs (full table in `opencode-vision/docs/ARCHITECTURE.md` §4.5):
+
+* `VISION_SPAWN_SERVER` (`1`) — set `0` to disable lazy spawn and use an externally-run `:8083` (e.g. `opencode-vision/vision-server/run-vision.ps1`).
+* `VISION_LLAMA_IDLE_TIMEOUT` (`300`) — idle seconds before the `:8083` server auto-shuts down; `0` keeps it alive until OpenCode exits.
+* `VISION_LLAMA_MODEL` / `VISION_LLAMA_MMPROJ` — paths to the VLM + mmproj GGUFs (downloaded by the deploy script into `opencode-vision/`); keep these filenames in sync with the deploy script's `$visionModelFile` / `$visionMmprojFile`.
+* `VISION_LLAMA_VISIBLE_CONSOLE` (`1`) — `0` spawns the server hidden and logs to `%TEMP%/opencode-vision/llama-server.log`.
+
 ## Troubleshooting & Failure Modes
 
 The `Deploy-Homelab.ps1` script is built with strict error checking. If the script halts and outputs a fatal error, locate the corresponding failure mode below:
@@ -142,7 +198,7 @@ Winget or npm failed to pull the required JavaScript dependencies. If Node.js in
 `opencode.json` references `{env:HOMELAB_ROOT}` for the `coding-assistant` and `proton-suite` MCP commands. The deploy script sets this variable at machine scope, but already-open terminals and editors still hold the old empty environment. Close OpenCode and any shell windows that were open before deployment, then relaunch from a fresh terminal. To verify the value is set, run `[Environment]::GetEnvironmentVariable("HOMELAB_ROOT","Machine")` in a new PowerShell window — it should print the forward-slashed path to your Homelab repo. If empty, re-run `Deploy-Homelab.ps1`.
 
 **Python / pip / Hugging Face CLI installation failed**
-Winget failed to install Python 3.14, or Python failed to bootstrap pip. If Python is installed but the Hugging Face CLI failed, open a fresh Administrator PowerShell prompt and run `pip install huggingface_hub[cli] --break-system-packages` manually.
+Winget failed to install Python 3.12, or Python failed to bootstrap pip. If Python is installed but the Hugging Face CLI failed, open a fresh Administrator PowerShell prompt and run `pip install "huggingface_hub[cli,hf_xet]" --break-system-packages` manually. (MCP Python dependency failures are non-fatal — the deploy collects them into a "DEPENDENCY ISSUES" summary at the end with the exact pip command to re-run.)
 
 **Failed to clone or pull repository**
 Git cannot reach GitHub, or the local directory is locked. Verify your internet connection. If updating an existing repository fails due to local modifications, stash your changes or delete the `Homelab` directory to allow a fresh clone.
@@ -158,6 +214,19 @@ The `git clone` command technically succeeded, but the files are missing. This u
 
 **Failed to start Caddy Proxy / SearXNG / Excalidraw**
 Docker compose failed to boot the container stack. If Caddy fails, it is almost always a port collision (Caddy strictly requires ports 80 and 443). Open PowerShell as Administrator, run `netstat -abno | findstr :80`, identify the conflicting Process ID (PID), and stop that service. If other containers fail, check the terminal output for volume mounting errors or missing `.env` files.
+
+**`Network searxng_default Resource is still in use` after `docker compose down`**
+You ran `down` with a different compose file than the one you brought the stack up with. SearXNG has two files — `docker-compose.yml` (base, no VPN) and `docker-compose.vpn.yml` (VPN). They share the same project, but `docker compose down` only removes the services defined in *the file you pass*. So if the VPN stack was running and you `down` the base file, `searxng-gluetun` and `searxng-vpn-rotator` are left behind (they're not in the base file) — still attached to `searxng_default`, which can't then be removed.
+
+The fix is to tear down with the VPN file (the superset), or sweep orphans:
+
+```powershell
+cd C:\Users\kenic\Documents\Homelab\searxng
+docker compose -f docker-compose.vpn.yml down -v   # removes gluetun + vpn-rotator too
+# or, regardless of which file:  docker compose down --remove-orphans
+```
+
+Rule of thumb: tear down with the **same file you brought up with**, or use `docker-compose.vpn.yml` since it's a superset of the base. `docker ps --filter "name=searxng"` shows exactly which containers are still holding the network.
 
 ---
 

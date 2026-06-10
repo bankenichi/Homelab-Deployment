@@ -22,6 +22,25 @@ $llamaModelFile = "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-
 $llamaVisionRepo = "mudler/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-GGUF"
 $llamaVisionFile = "mmproj.gguf"
 
+# opencode-vision VLM (dedicated :8083 vision server, lazily spawned by vision_mcp.py).
+# These two files are downloaded into <repo>/opencode-vision/ and referenced by the
+# VISION_LLAMA_MODEL / VISION_LLAMA_MMPROJ env vars in opencode.json. Keep these filenames
+# in sync with that opencode.json `vision` mcp entry — if they drift, the MCP can't spawn.
+$visionModelRepo  = "mradermacher/CyberNeurova-Qwen2.5-VL-3B-Instruct-abliterated-GGUF"
+$visionModelFile  = "CyberNeurova-Qwen2.5-VL-3B-Instruct-abliterated.Q4_K_M.gguf"
+$visionMmprojFile = "CyberNeurova-Qwen2.5-VL-3B-Instruct-abliterated.mmproj-Q8_0.gguf"
+
+# Non-fatal dependency issue collector. Optional-but-not-critical steps (Python MCP deps,
+# the OpenCode plugin npm install, the vision VLM download) append a human-readable entry
+# with a manual fix command here instead of aborting the whole deploy via Exit-Fatal. The
+# list is printed as a "DEPENDENCY ISSUES" section in the final summary (§17). The core
+# stack (Docker apps, llama.cpp + main model, OpenCode) still hard-fails on real errors.
+$script:depIssues = [System.Collections.Generic.List[string]]::new()
+function Add-DepIssue { param([string]$What, [string]$Fix)
+    $script:depIssues.Add("- $What`n    Fix: $Fix")
+    Write-Warning "$What (continuing; will be summarized at the end)"
+}
+
 # === HELPER: FATAL ERROR ===
 function Exit-Fatal {
     param([string]$Message)
@@ -307,25 +326,33 @@ if ($pythonCmd) {
     if ($pyVersionOutput -match "Python (\d+)\.(\d+)") {
         $pyMajor = [int]$Matches[1]
         $pyMinor = [int]$Matches[2]
-        if ($pyMajor -lt 3 -or ($pyMajor -eq 3 -and $pyMinor -lt 14)) {
-            Write-Host "Python $pyMajor.$pyMinor detected — upgrading to Python 3.14..." -ForegroundColor Yellow
+        # Require a reasonably modern Python (3.10+). We do NOT force-upgrade an existing
+        # newer Python (e.g. 3.13/3.14) — users can manage that themselves. Fresh installs
+        # target 3.12, which has the broadest wheel support for the heavy parsing stack
+        # (textract, pdfplumber, pdfminer.six, etc.). 3.13/3.14 may lack some wheels;
+        # any resulting dep failures are collected and surfaced at the end (non-fatal).
+        if ($pyMajor -lt 3 -or ($pyMajor -eq 3 -and $pyMinor -lt 10)) {
+            Write-Host "Python $pyMajor.$pyMinor is too old — installing Python 3.12..." -ForegroundColor Yellow
             $needsPythonInstall = $true
         } else {
             Write-Host "Python $pyVersionOutput confirmed." -ForegroundColor DarkGray
+            if ($pyMinor -ge 13) {
+                Write-Warning "Python $pyMajor.$pyMinor is newer than the tested 3.12; some MCP deps (e.g. textract) may lack wheels. Failures will be summarized at the end."
+            }
         }
     } else {
-        Write-Warning "Could not parse Python version from: $pyVersionOutput. Will attempt to install Python 3.14."
+        Write-Warning "Could not parse Python version from: $pyVersionOutput. Will attempt to install Python 3.12."
         $needsPythonInstall = $true
     }
 } else {
-    Write-Host "Python not found. Installing Python 3.14..." -ForegroundColor Yellow
+    Write-Host "Python not found. Installing Python 3.12..." -ForegroundColor Yellow
     $needsPythonInstall = $true
 }
 
 if ($needsPythonInstall) {
     $LASTEXITCODE = 0
-    winget install --id Python.Python.3.14 -e --source winget --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) { Exit-Fatal "Python 3.14 installation via winget failed." }
+    winget install --id Python.Python.3.12 -e --source winget --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) { Exit-Fatal "Python 3.12 installation via winget failed." }
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
     # Re-resolve python command after install/upgrade
     $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } elseif (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { $null }
@@ -344,7 +371,9 @@ if (!(Get-Command pip -ErrorAction SilentlyContinue)) {
 if (!(Get-Command huggingface-cli -ErrorAction SilentlyContinue)) {
     Write-Host "Hugging Face CLI not found. Installing via pip..." -ForegroundColor Yellow
     $LASTEXITCODE = 0
-    pip install huggingface_hub[cli] --break-system-packages
+    # hf_xet enables fast native downloads from xet-backed repos (the vision VLM repo is
+    # xet); without it the CLI falls back to slower plain HTTP. cli pulls the entrypoint.
+    pip install "huggingface_hub[cli,hf_xet]" --break-system-packages
     if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to install huggingface-cli via pip." }
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 }
@@ -378,24 +407,39 @@ Write-Host "Repository is ready at $targetDir." -ForegroundColor Green
 Write-Host "Installing Python dependencies for MCP servers..." -ForegroundColor Cyan
 $codingMcpReq = "$targetDir\mcp-server\requirements.txt"
 $protonMcpReq = "$targetDir\proton-mcp\requirements.txt"
+$visionMcpReq = "$targetDir\opencode-vision\mcp\requirements.txt"
 
+# MCP dep installs are NON-FATAL: a single bad/unbuildable package (e.g. textract on a
+# too-new Python) must not abort the whole deploy. Failures are collected and surfaced in
+# the final summary with the exact command to re-run by hand. The Docker apps, llama.cpp,
+# and OpenCode itself do not depend on these Python packages.
 if (Test-Path $codingMcpReq) {
     $LASTEXITCODE = 0
     pip install -r $codingMcpReq
-    if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to install Python deps for mcp-server ($codingMcpReq)." }
+    if ($LASTEXITCODE -ne 0) { Add-DepIssue "coding-assistant MCP Python deps failed to install." "pip install -r `"$codingMcpReq`"" }
 } else {
-    Write-Warning "Missing $codingMcpReq — skipping mcp-server dependency install."
+    Add-DepIssue "Missing $codingMcpReq — coding-assistant MCP deps not installed." "Verify the repo cloned fully, then: pip install -r `"$codingMcpReq`""
 }
 
 if (Test-Path $protonMcpReq) {
     $LASTEXITCODE = 0
     pip install -r $protonMcpReq
-    if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to install Python deps for proton-mcp ($protonMcpReq)." }
+    if ($LASTEXITCODE -ne 0) { Add-DepIssue "proton-suite MCP Python deps failed to install." "pip install -r `"$protonMcpReq`"" }
 } else {
-    Write-Warning "Missing $protonMcpReq — skipping proton-mcp dependency install."
+    Add-DepIssue "Missing $protonMcpReq — proton-suite MCP deps not installed." "Verify the repo cloned fully, then: pip install -r `"$protonMcpReq`""
 }
 
-Write-Host "Python MCP dependencies installed." -ForegroundColor Green
+# opencode-vision MCP server (vision_mcp.py) — deps: mcp, requests. Spawns the :8083
+# vision llama-server on demand; without these the `vision` MCP entry fails to start.
+if (Test-Path $visionMcpReq) {
+    $LASTEXITCODE = 0
+    pip install -r $visionMcpReq
+    if ($LASTEXITCODE -ne 0) { Add-DepIssue "opencode-vision MCP Python deps failed to install." "pip install -r `"$visionMcpReq`"" }
+} else {
+    Add-DepIssue "Missing $visionMcpReq — opencode-vision MCP deps not installed." "Verify the repo cloned fully, then: pip install -r `"$visionMcpReq`""
+}
+
+Write-Host "Python MCP dependency install step complete." -ForegroundColor Green
 
 # === 8c. SET HOMELAB_ROOT ENVIRONMENT VARIABLE ===
 # opencode.json references this path via {env:HOMELAB_ROOT} for its MCP server commands,
@@ -441,6 +485,28 @@ Initialize-Symlink -LinkPath $agentsLink -TargetDir $agentsTarget
 Initialize-Symlink -LinkPath $opencodeConfigLink -TargetDir $opencodeConfigTarget
 
 Write-Host "Symlinks configured successfully." -ForegroundColor Green
+
+# Install the OpenCode plugin dependencies (incl. the opencode-vision plugin's
+# @opencode-ai/plugin + @types/node). OpenCode runs the .ts plugin directly via Bun, so
+# these are primarily for type resolution / tooling, but npm install keeps the vendored
+# plugin's package.json honored and avoids editor/type drift. Idempotent.
+$opencodePkgDir = "$opencodeConfigTarget"
+if (Test-Path "$opencodePkgDir\package.json") {
+    if (Get-Command npm -ErrorAction SilentlyContinue) {
+        Write-Host "Installing OpenCode plugin dependencies (npm install)..." -ForegroundColor Cyan
+        Push-Location $opencodePkgDir
+        $LASTEXITCODE = 0
+        npm install
+        Pop-Location
+        # Non-fatal: the vision plugin runs as raw .ts via Bun with zero runtime deps;
+        # these packages are for type resolution/tooling only, so a failure shouldn't abort.
+        if ($LASTEXITCODE -ne 0) { Add-DepIssue "OpenCode plugin npm install failed (type tooling only; plugin still runs)." "cd `"$opencodePkgDir`"; npm install" }
+    } else {
+        Add-DepIssue "npm not found — OpenCode plugin dev deps not installed (plugin still runs via Bun)." "Install Node.js, then: cd `"$opencodePkgDir`"; npm install"
+    }
+} else {
+    Write-Warning "Missing $opencodePkgDir\package.json — skipping OpenCode plugin dependency install."
+}
 
 # === 10. INJECT LOCAL DNS ===
 $hostsPath = "$env:windir\System32\drivers\etc\hosts"
@@ -592,6 +658,33 @@ if (Get-Command huggingface-cli -ErrorAction SilentlyContinue) {
     huggingface-cli download $llamaVisionRepo $llamaVisionFile --local-dir $llamaInstallDir
     if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to download the vision MMProj model." }
 
+    # opencode-vision dedicated VLM (Qwen2.5-VL-3B) + its mmproj, into <repo>/opencode-vision/.
+    # Lazily spawned on :8083 by vision_mcp.py. Idempotent: skip files already on disk so
+    # re-runs don't re-pull ~2.8 GB. Filenames MUST match the VISION_LLAMA_* paths in opencode.json.
+    $visionDir = "$targetDir\opencode-vision"
+    if (!(Test-Path $visionDir)) { New-Item -ItemType Directory -Path $visionDir -Force | Out-Null }
+
+    # Vision VLM download is NON-FATAL: it's optional (only the `vision` MCP needs it) and
+    # large. A failure is collected and surfaced at the end with the manual command, rather
+    # than aborting the deploy of the core stack.
+    if (!(Test-Path "$visionDir\$visionModelFile")) {
+        Write-Host "Downloading opencode-vision VLM GGUF..." -ForegroundColor Cyan
+        $LASTEXITCODE = 0
+        huggingface-cli download $visionModelRepo $visionModelFile --local-dir $visionDir
+        if ($LASTEXITCODE -ne 0) { Add-DepIssue "opencode-vision VLM model download failed (vision MCP won't spawn until present)." "huggingface-cli download $visionModelRepo $visionModelFile --local-dir `"$visionDir`"" }
+    } else {
+        Write-Host "opencode-vision VLM already present. Skipping." -ForegroundColor DarkGray
+    }
+
+    if (!(Test-Path "$visionDir\$visionMmprojFile")) {
+        Write-Host "Downloading opencode-vision mmproj GGUF..." -ForegroundColor Cyan
+        $LASTEXITCODE = 0
+        huggingface-cli download $visionModelRepo $visionMmprojFile --local-dir $visionDir
+        if ($LASTEXITCODE -ne 0) { Add-DepIssue "opencode-vision mmproj download failed (vision MCP won't spawn until present)." "huggingface-cli download $visionModelRepo $visionMmprojFile --local-dir `"$visionDir`"" }
+    } else {
+        Write-Host "opencode-vision mmproj already present. Skipping." -ForegroundColor DarkGray
+    }
+
     Write-Host "Model downloads complete." -ForegroundColor Green
 } else {
     Exit-Fatal "huggingface-cli is missing after installation step. Cannot proceed with model downloads."
@@ -685,6 +778,9 @@ if (!(Test-Path "$targetDir\searxng")) {
 if (!(Test-Path "$targetDir\excalidraw")) {
     Exit-Fatal "Expected folder '$targetDir\excalidraw' not found. Did the clone succeed? Check the repo structure."
 }
+if (!(Test-Path "$targetDir\opencode-vision\mcp\vision_mcp.py")) {
+    Exit-Fatal "Expected '$targetDir\opencode-vision\mcp\vision_mcp.py' not found. Did the clone succeed? Check the repo structure."
+}
 
 Write-Host "Repository structure validated." -ForegroundColor Green
 
@@ -697,13 +793,33 @@ Pop-Location
 if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to start Caddy Proxy. Check docker compose output above." }
 Test-ContainerHealth -ContainerName "caddy"
 
-Write-Host "Booting SearXNG..." -ForegroundColor Cyan
+# SearXNG boots WITHOUT a VPN by default (base docker-compose.yml) — it works standalone
+# and never depends on a Proton key. To route SearXNG's egress through a Proton VPN US node
+# (fixes Google's 403 image-search blocks), run Enable-SearxngVpn.ps1 after deploy; it
+# switches the stack to docker-compose.vpn.yml. See searxng\VPN-EGRESS.md.
+#
+# VPN-aware re-run guard: if a previous run of Enable-SearxngVpn.ps1 already switched this
+# box to the VPN variant (gluetun container present), DON'T boot the base file — that would
+# silently drop the tunnel and orphan gluetun/vpn-rotator on searxng_default. Re-up the VPN
+# variant instead so a plain redeploy preserves the user's VPN choice.
 Push-Location "$targetDir\searxng"
-$LASTEXITCODE = 1
-docker compose up -d
-Pop-Location
-if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to start SearXNG. Check docker compose output above." }
-Test-ContainerHealth -ContainerName "searxng-core"
+$vpnActive = (docker ps -a --filter "name=searxng-gluetun" --format "{{.Names}}" 2>$null)
+if ($vpnActive) {
+    Write-Host "Existing VPN stack detected — booting SearXNG via docker-compose.vpn.yml..." -ForegroundColor Cyan
+    $LASTEXITCODE = 1
+    docker compose -f docker-compose.vpn.yml up -d
+    Pop-Location
+    if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to start the VPN SearXNG stack. Check docker compose output above." }
+    Test-ContainerHealth -ContainerName "searxng-gluetun"
+    Test-ContainerHealth -ContainerName "searxng-core"
+} else {
+    Write-Host "Booting SearXNG (no VPN — opt in later with Enable-SearxngVpn.ps1)..." -ForegroundColor Cyan
+    $LASTEXITCODE = 1
+    docker compose up -d
+    Pop-Location
+    if ($LASTEXITCODE -ne 0) { Exit-Fatal "Failed to start SearXNG. Check docker compose output above." }
+    Test-ContainerHealth -ContainerName "searxng-core"
+}
 
 Write-Host "Booting Excalidraw..." -ForegroundColor Cyan
 Push-Location "$targetDir\excalidraw"
@@ -764,5 +880,25 @@ Write-Host ""
 Write-Host "NOTE: You may need to restart your current terminal window for the new commands" -ForegroundColor Yellow
 Write-Host "(opencode and run-llama) to be recognized in your system PATH." -ForegroundColor Yellow
 Write-Host "================================================================================" -ForegroundColor Green
+
+# --- Deferred dependency issues (non-fatal steps that didn't complete) ---
+if ($script:depIssues.Count -gt 0) {
+    Write-Host ""
+    Write-Host "================================================================================" -ForegroundColor Yellow
+    Write-Host "  DEPENDENCY ISSUES ($($script:depIssues.Count)) — the core stack deployed, but these optional" -ForegroundColor Yellow
+    Write-Host "  components need a manual step. Run the fix command(s) below, then re-open OpenCode." -ForegroundColor Yellow
+    Write-Host "================================================================================" -ForegroundColor Yellow
+    foreach ($issue in $script:depIssues) {
+        Write-Host ""
+        Write-Host $issue -ForegroundColor Gray
+    }
+    Write-Host ""
+    Write-Host "  Tip: if a Python package fails to build on a very new Python (e.g. textract on" -ForegroundColor DarkGray
+    Write-Host "  3.13/3.14), install Python 3.12 and re-run the pip command against it." -ForegroundColor DarkGray
+    Write-Host "================================================================================" -ForegroundColor Yellow
+} else {
+    Write-Host "All optional dependencies installed cleanly." -ForegroundColor Green
+}
+
 Write-Host ""
 Pause
