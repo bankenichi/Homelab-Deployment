@@ -1,3 +1,12 @@
+// @ts-nocheck
+// NOTE: The @ts-nocheck above silences editor-only TS errors (missing @types/node:
+// `node:*` imports, `Buffer`). These are cosmetic — Bun runs this .ts directly and
+// provides all Node built-ins at runtime, so the errors have no runtime effect.
+// DO NOT "fix" them by adding a tsconfig.json or @types/* to this directory
+// (opencode and skills/opencode/, symlinked to ~/.config/opencode). Bun reads any
+// tsconfig found here when loading the plugin and it can break OpenCode startup.
+// See PLAN.md §4 "Gotchas / lessons". Type-check in the fork instead.
+//
 // opencode-vision — live plugin loaded by OpenCode from ~/.config/opencode/plugins/
 //
 // SOURCE OF TRUTH: github.com/bankenichi/opencode-vision (AGPL-3.0). This file is a
