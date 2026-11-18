@@ -21,8 +21,10 @@
 > still describes the V1 wiring; see **"Migration log"** at the end for the V1 → V2 mapping and
 > the re-run checklist. The MCP server (`mcp/vision_mcp.py`) is unchanged.
 > Committed: Homelab `4161a32`, fork `d0c6652` (nested clone under `plugin/src-fork/`,
-> now ignored by the root `.gitignore`). **Neither pushed yet.** Remaining: restart
-> OpenCode and run checklist M.1–M.6 in `opencode.log`.
+> now ignored by the root `.gitignore`). Both pushed 2026-11-18. Note: the Homelab
+> remote has moved to `github.com/bankenichi/Homelab-Deployment` — consider
+> `git remote set-url origin` (not done). Remaining: restart OpenCode and run
+> checklist M.1–M.6 in `opencode.log`.
 
 Authoritative, ordered build plan. Execute phases in order; do not start a phase until the
 previous phase's exit test passes. Checkboxes are for the downstream coder.
@@ -262,6 +264,8 @@ hook registration so a renamed hook can't take the whole plugin down.
 - [x] **M.7** Mirror into the fork (`plugin/src-fork/`, source of truth
       `github.com/bankenichi/opencode-vision`) — done 2026-11-18: fork commit
       `d0c6652` on `main` (V2 rewrite fully typed, `npm run build` green, deps bumped
-      to `@opencode/plugin` peer >=2.0.0 / dev ^2.2.5 + `@opencode/ai` dev). **Not
-      pushed yet.** The fork is a nested git repo; `opencode-vision/.gitignore` now
-      ignores all of `plugin/src-fork/` so the outer repo never sees a gitlink.
+      to `@opencode/plugin` peer >=2.0.0 / dev ^2.2.5 + `@opencode/ai` dev). Pushed
+      to `origin/main` 2026-11-18. The fork is a nested git repo; the **root**
+      `.gitignore` now ignores all of `opencode-vision/plugin/src-fork/` so the outer
+      repo never sees a gitlink (the nested `opencode-vision/.gitignore` has the same
+      rule but is itself untracked — the root ignores all `.gitignore` files).
