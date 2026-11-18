@@ -20,6 +20,9 @@
 > `backups/opencode-vision.ts.v1.bak-20261118` (SHA-256 `B81D1F98…40B1`). Everything below
 > still describes the V1 wiring; see **"Migration log"** at the end for the V1 → V2 mapping and
 > the re-run checklist. The MCP server (`mcp/vision_mcp.py`) is unchanged.
+> Committed: Homelab `4161a32`, fork `d0c6652` (nested clone under `plugin/src-fork/`,
+> now ignored by the root `.gitignore`). **Neither pushed yet.** Remaining: restart
+> OpenCode and run checklist M.1–M.6 in `opencode.log`.
 
 Authoritative, ordered build plan. Execute phases in order; do not start a phase until the
 previous phase's exit test passes. Checkboxes are for the downstream coder.
