@@ -7,6 +7,9 @@ searxng/vpn.env
 *.conf
 # (Caddyfile has no extension, so it is NOT matched by *.conf and stays tracked.)
 
+# --- Nested git repos (clones kept in-tree; never record a gitlink) ---
+opencode-vision/plugin/src-fork/
+
 # --- Local-only / personal ---
 .gitignore
 html signature.txt

@@ -5,29 +5,56 @@
 // DO NOT "fix" them by adding a tsconfig.json or @types/* to this directory
 // (opencode and skills/opencode/, symlinked to ~/.config/opencode). Bun reads any
 // tsconfig found here when loading the plugin and it can break OpenCode startup.
-// See PLAN.md §4 "Gotchas / lessons". Type-check in the fork instead.
+// See PLAN.md §4 "Gotchas / lessons" and the "Migration log" section. Type-check in the fork instead.
 //
 // opencode-vision — live plugin loaded by OpenCode from ~/.config/opencode/plugins/
 //
 // SOURCE OF TRUTH: github.com/bankenichi/opencode-vision (AGPL-3.0). This file is a
 // vendored copy. No build step is required: OpenCode runs on Bun, which executes
-// TypeScript directly, and this plugin's only imports are `import type` (erased at
-// runtime) plus Node built-ins — zero runtime npm dependencies.
+// TypeScript directly, and this plugin's only imports are Node built-ins — zero
+// runtime npm dependencies. (Deliberately no `@opencode/plugin` import: the plugin
+// definition object is hand-built below, so nothing has to be installed for the
+// config dir.)
 //
 // If you edit the plugin, do it in the fork, then re-copy here (and into
 // ../../opencode-vision/plugin/src-fork/src/index.ts). See opencode-vision/plugin/README.md.
 //
+// OPENCODE V2 PLUGIN API (rewritten 2026-11-18 — see PLAN.md "Migration log"):
+//   OpenCode 2.x validates the module's default export as a *definition object*:
+//
+//       interface Plugin { id: string; setup: (ctx) => Promise<Cleanup|void> | Cleanup | void }
+//
+//   The V1 shape ("default export is an async function returning a hooks object") no
+//   longer runs; it fails at startup with
+//   `PluginModule.LoadError: Plugin must export a default definition with an id and an
+//   effect or setup function. (cause: SchemaError(Expected object at ["default"]))`.
+//   Docs: https://opencode.ai/v2/docs/build/plugins  (migrate: /build/plugins/migrate-v1)
+//
+//   V1 → V2 mapping used here:
+//     - `client.app.log(...)`                 → `console.log(...)` (lands in opencode.log)
+//     - `experimental.chat.messages.transform` → `ctx.session.hook("context", cb)`
+//     - `event` handler on `session.idle`      → `ctx.session.hook("experimental.idle", cb)`
+//     - `server.instance.disposed`             → the `Cleanup` fn returned from `setup`
+//     - model on the message (`info.modelID`)  → `event.model` = { providerID, id, variant? }
+//     - `parts[]` / `FilePart{mime,url}`       → `message.content[]` / `MediaPart{media:{source}}`
+//
 // Pairs with: the `vision` MCP server (opencode-vision/mcp/vision_mcp.py) which exposes
 // the `vision_analyze` tool, and config/opencode-vision.json which sets the model patterns
-// and imageAnalysisTool. Activated for models matching `llama.cpp/*`.
+// and imageAnalysisTool.
 
-import type { Plugin } from "@opencode-ai/plugin";
-import type { Message, Part, FilePart, TextPart } from "@opencode-ai/sdk";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
+import {
+  mkdir,
+  writeFile,
+  readFile,
+  unlink,
+  readdir,
+  stat,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 // Constants
 
@@ -35,6 +62,12 @@ const PLUGIN_NAME = "opencode-vision";
 const CONFIG_FILENAME = "opencode-vision.json";
 const TEMP_DIR_NAME = "opencode-vision";
 const MAX_TOOL_NAME_LENGTH = 256;
+
+/**
+ * Temp images are also swept when they are older than this, so files left behind by a
+ * crashed/aborted session (idle hook never fired) do not pile up forever.
+ */
+const STALE_IMAGE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 const PROMPT_TEMPLATE_VARIABLES = [
   "{imageList}",
@@ -60,6 +93,14 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   "image/webp": "webp",
 };
 
+/** Reverse of MIME_TO_EXTENSION: used when a media part carries only a filename. */
+const EXTENSION_TO_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+};
+
 // Types
 
 interface PluginConfig {
@@ -68,10 +109,17 @@ interface PluginConfig {
   promptTemplate?: string;
 }
 
+/**
+ * An image that has been made available to the MCP vision tool.
+ *
+ * `part` is the *identity* of the content part that produced it — V2 media parts have no
+ * id field, so the transform below drops processed parts by object identity.
+ * `temporary` is true only for files this plugin wrote into the temp dir.
+ */
 interface SavedImage {
   path: string;
   mime: string;
-  partId: string;
+  part: unknown;
   temporary: boolean;
 }
 
@@ -85,7 +133,13 @@ type Logger = (msg: string) => void;
 // Plugin State
 
 let pluginConfig: PluginConfig = {};
+
+/** sessionID → set of temp file paths created for that session. */
 const sessionTempImages = new Map<string, Set<string>>();
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 // Config: Path Resolution
 
@@ -229,6 +283,12 @@ function getPromptTemplate(): string | undefined {
   return pluginConfig.promptTemplate;
 }
 
+// Temp File Tracking & Cleanup
+//
+// Images decoded from a request are written to %TEMP%/opencode-vision/ so the MCP tool can
+// open them by path. They are deleted when the session goes idle; the shutdown Cleanup and
+// the stale sweep cover sessions that never reach idle (interrupted/failed runs).
+
 function trackTemporaryImages(sessionID: string, images: SavedImage[]): void {
   const tempPaths = images
     .filter((img) => img.temporary)
@@ -256,9 +316,7 @@ async function cleanupSessionTempImages(
       await unlink(tempPath);
       log(`Deleted temp image: ${tempPath}`);
     } catch (err) {
-      log(
-        `Failed to delete temp image ${tempPath}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      log(`Failed to delete temp image ${tempPath}: ${errorMessage(err)}`);
     }
   }
 }
@@ -267,6 +325,40 @@ async function cleanupAllTempImages(log: Logger): Promise<void> {
   const sessionIDs = Array.from(sessionTempImages.keys());
   for (const sessionID of sessionIDs) {
     await cleanupSessionTempImages(sessionID, log);
+  }
+}
+
+/**
+ * Deletes temp images this plugin created more than STALE_IMAGE_MAX_AGE_MS ago.
+ *
+ * Covers files that were never tracked (or never cleaned) because the owning session was
+ * interrupted, failed, or the process died. Only touches files inside our own temp
+ * sub-directory; anything missing/vanished in the meantime is ignored.
+ */
+async function cleanupStaleTempImages(log: Logger): Promise<void> {
+  const dir = join(tmpdir(), TEMP_DIR_NAME);
+  if (!existsSync(dir)) return;
+
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch (err) {
+    log(`Temp dir sweep skipped: ${errorMessage(err)}`);
+    return;
+  }
+
+  const now = Date.now();
+  for (const entry of entries) {
+    const filePath = join(dir, entry);
+    try {
+      const info = await stat(filePath);
+      if (!info.isFile()) continue;
+      if (now - info.mtimeMs <= STALE_IMAGE_MAX_AGE_MS) continue;
+      await unlink(filePath);
+      log(`Deleted stale temp image: ${filePath}`);
+    } catch {
+      // File raced away or is not ours to delete; the next sweep will try again.
+    }
   }
 }
 
@@ -329,105 +421,71 @@ function modelMatchesAnyPattern(model: ModelInfo | undefined): boolean {
   return patterns.some((pattern) => matchesSinglePattern(pattern, model));
 }
 
-// Type Guards
+// Type Guards (V2 request messages)
 //
-// Messages in OpenCode contain "parts" - an array of different content types:
-// - TextPart: The user's typed text
-// - FilePart: Attached files (images, PDFs, etc.) with mime type and URL
+// A V2 request message is `{ role, content: ContentPart[] }`, and a user turn's content
+// parts are:
+//   - TextPart:  { type: "text", text }
+//   - MediaPart: { type: "media", media, filename?, cache?, providerMetadata? }
+// `media` is a media Asset: it carries `source` (a tagged union — bytes | base64 | url |
+// ref) plus a resolved `mediaType`. The older V1 shape was `parts[]` with `FilePart`.
 
-function isImageFilePart(part: Part): part is FilePart {
-  if (part.type !== "file") return false;
-  const mime = (part as FilePart).mime?.toLowerCase() ?? "";
-  return SUPPORTED_MIME_TYPES.has(mime);
+function isTextPart(part: unknown): boolean {
+  return (part as { type?: string })?.type === "text";
 }
 
-function isTextPart(part: Part): part is TextPart {
-  return part.type === "text";
+/** Returns the Asset carrying a media part's payload, or undefined if absent. */
+function getMediaAsset(part: unknown): any {
+  if ((part as { type?: string })?.type !== "media") return undefined;
+  return (part as { media?: any }).media;
 }
 
-// Image Processing: URL Handlers
+function mimeFromFilename(filename: unknown): string | undefined {
+  if (typeof filename !== "string") return undefined;
+  const dot = filename.lastIndexOf(".");
+  if (dot === -1 || dot === filename.length - 1) return undefined;
+  const ext = filename.slice(dot + 1).toLowerCase();
+  return EXTENSION_TO_MIME[ext];
+}
+
+/**
+ * Resolves the media type of a media part.
+ *
+ * Preference order: the Asset's own resolved `mediaType` (OpenCode sniffs magic bytes, so
+ * this is the most reliable), then the source's declared `mediaType`, then the part's
+ * filename extension. Returns "" when nothing is declared, so callers can skip the part.
+ */
+function resolveMediaMime(part: unknown): string {
+  const asset = getMediaAsset(part);
+  if (!asset) return "";
+
+  const candidates: unknown[] = [
+    asset.mediaType,
+    asset.source?.mediaType,
+    mimeFromFilename((part as { filename?: unknown }).filename),
+    mimeFromFilename(asset.filename),
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate !== "") {
+      return candidate.toLowerCase();
+    }
+  }
+  return "";
+}
+
+/** True when the part is a media part whose type is one of the supported image mimetypes. */
+function isImageMediaPart(part: unknown): boolean {
+  return SUPPORTED_MIME_TYPES.has(resolveMediaMime(part));
+}
+
+// Image Processing: Media Sources
 //
-// Images can arrive via different URL schemes:
-// - file://  → Already on disk, just need the local path
-// - data:    → Base64-encoded, must decode and save to temp file
-// - http(s): → Remote URL, pass through for MCP tool to fetch directly
-
-function handleFileUrl(
-  url: string,
-  filePart: FilePart,
-  log: Logger,
-): SavedImage | null {
-  // Image is already saved locally; strip the file:// prefix to get the path
-  const localPath = url.replace("file://", "");
-  log(`Image already on disk: ${localPath}`);
-  return {
-    path: localPath,
-    mime: filePart.mime,
-    partId: filePart.id,
-    temporary: false,
-  };
-}
-
-function parseBase64DataUrl(
-  dataUrl: string,
-): { mime: string; data: Buffer } | null {
-  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) return null;
-
-  try {
-    return { mime: match[1], data: Buffer.from(match[2], "base64") };
-  } catch {
-    return null;
-  }
-}
-
-async function handleDataUrl(
-  url: string,
-  filePart: FilePart,
-  log: Logger,
-): Promise<SavedImage | null> {
-  // Pasted clipboard images arrive as base64 data URLs.
-  // Decode and save to a temp file so the MCP tool can read it.
-  const parsed = parseBase64DataUrl(url);
-  if (!parsed) {
-    log(`Failed to parse data URL for part ${filePart.id}`);
-    return null;
-  }
-
-  try {
-    const savedPath = await saveImageToTemp(parsed.data, parsed.mime);
-    log(`Saved image to: ${savedPath}`);
-    return {
-      path: savedPath,
-      mime: parsed.mime,
-      partId: filePart.id,
-      temporary: true,
-    };
-  } catch (err) {
-    log(
-      `Failed to save image: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return null;
-  }
-}
-
-function handleHttpUrl(
-  url: string,
-  filePart: FilePart,
-  log: Logger,
-): SavedImage {
-  // Remote URLs are passed directly to the MCP tool, which can fetch them itself.
-  // This avoids unnecessary network requests and disk I/O.
-  log(`Image is remote URL: ${url}`);
-  return {
-    path: url,
-    mime: filePart.mime,
-    partId: filePart.id,
-    temporary: false,
-  };
-}
-
-// Image Processing: File Operations
+// V2 tags where the bytes live instead of encoding it in a URL scheme:
+//   base64 / bytes → inline in the request; must be decoded and saved to a temp file
+//   url            → `file:` (already on disk), `http(s)` (pass through to the MCP tool)
+//                    or a `data:` URL (defensive; treated like base64)
+//   ref            → an id in the provider's own storage; no local bytes, so it is skipped
 
 function getExtensionForMime(mime: string): string {
   return MIME_TO_EXTENSION[mime.toLowerCase()] ?? "png";
@@ -447,51 +505,155 @@ async function saveImageToTemp(data: Buffer, mime: string): Promise<string> {
   return filepath;
 }
 
-// Image Processing: Main Processor
-
-async function processImagePart(
-  filePart: FilePart,
+/** Saves decoded image bytes into the temp dir and returns the SavedImage record. */
+async function saveInlineBytes(
+  data: Buffer,
+  mime: string,
+  part: unknown,
   log: Logger,
 ): Promise<SavedImage | null> {
-  const url = filePart.url;
-
-  if (!url) {
-    log(`Skipping image part ${filePart.id}: no URL`);
+  try {
+    const savedPath = await saveImageToTemp(data, mime);
+    log(`Saved image to: ${savedPath}`);
+    return { path: savedPath, mime, part, temporary: true };
+  } catch (err) {
+    log(`Failed to save image: ${errorMessage(err)}`);
     return null;
   }
+}
 
-  if (url.startsWith("file://")) {
-    return handleFileUrl(url, filePart, log);
+function parseBase64DataUrl(
+  dataUrl: string,
+): { mime: string; data: Buffer } | null {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+
+  try {
+    return { mime: match[1], data: Buffer.from(match[2], "base64") };
+  } catch {
+    return null;
   }
+}
 
-  if (url.startsWith("data:")) {
-    return handleDataUrl(url, filePart, log);
+/**
+ * Turns a `file:` URL into a local path.
+ *
+ * `fileURLToPath` is used first because it handles the Windows
+ * `file:///C:/dir/file.png` form correctly (a naive strip of `file://` leaves a leading
+ * slash and the path will not open). Falls back to the naive strip only if the URL is
+ * malformed.
+ */
+function fileUrlToLocalPath(url: string, log: Logger): string {
+  try {
+    return fileURLToPath(url);
+  } catch (err) {
+    const stripped = url.replace(/^file:\/\/\/?/, "");
+    log(
+      `fileURLToPath failed (${errorMessage(err)}); using stripped path: ${stripped}`,
+    );
+    return stripped;
+  }
+}
+
+/** Handles a media part whose source is `{ type: "url", url }`. */
+async function handleUrlSource(
+  url: string,
+  mime: string,
+  part: unknown,
+  log: Logger,
+): Promise<SavedImage | null> {
+  if (url.startsWith("file:")) {
+    // Image is already saved on disk; the MCP tool can read it directly.
+    const localPath = fileUrlToLocalPath(url, log);
+    log(`Image already on disk: ${localPath}`);
+    return { path: localPath, mime, part, temporary: false };
   }
 
   if (url.startsWith("http://") || url.startsWith("https://")) {
-    return handleHttpUrl(url, filePart, log);
+    // Remote URLs are passed directly to the MCP tool, which can fetch them itself.
+    // This avoids unnecessary network requests and disk I/O.
+    log(`Image is remote URL: ${url}`);
+    return { path: url, mime, part, temporary: false };
   }
 
-  log(`Unsupported URL scheme for part ${filePart.id}: ${url.slice(0, 50)}...`);
+  if (url.startsWith("data:")) {
+    // Pasted clipboard images may still arrive as base64 data URLs.
+    const parsed = parseBase64DataUrl(url);
+    if (!parsed) {
+      log("Failed to parse data URL for a media part");
+      return null;
+    }
+    return saveInlineBytes(parsed.data, parsed.mime || mime, part, log);
+  }
+
+  log(`Unsupported URL scheme for a media part: ${url.slice(0, 50)}...`);
   return null;
 }
 
-async function extractImagesFromParts(
-  parts: Part[],
+/**
+ * Makes one media part available to the vision tool.
+ * Returns the SavedImage record, or null when the part cannot be used
+ * (unsupported source, provider-side `ref`, write failure).
+ */
+async function processMediaPart(
+  part: unknown,
   log: Logger,
-): Promise<SavedImage[]> {
-  const savedImages: SavedImage[] = [];
+): Promise<SavedImage | null> {
+  const mime = resolveMediaMime(part);
+  const asset = getMediaAsset(part);
+  const source = asset?.source;
 
-  for (const part of parts) {
-    if (!isImageFilePart(part)) continue;
-
-    const result = await processImagePart(part, log);
-    if (result) {
-      savedImages.push(result);
+  if (!source || typeof source !== "object") {
+    // No tagged source; fall back to the Asset's synchronous inline view if present.
+    const inline =
+      typeof asset?.inline === "function" ? asset.inline() : undefined;
+    if (inline?.base64) {
+      return saveInlineBytes(
+        Buffer.from(inline.base64, "base64"),
+        inline.mime || mime,
+        part,
+        log,
+      );
     }
+    log("Skipping media part: no source payload");
+    return null;
   }
 
-  return savedImages;
+  switch (source.type) {
+    case "base64":
+      if (typeof source.data !== "string") return null;
+      return saveInlineBytes(
+        Buffer.from(source.data, "base64"),
+        source.mediaType || mime,
+        part,
+        log,
+      );
+
+    case "bytes":
+      if (!source.data) return null;
+      // `data` is a Uint8Array; Buffer.from accepts it without copying semantics we care about.
+      return saveInlineBytes(
+        Buffer.from(source.data),
+        source.mediaType || mime,
+        part,
+        log,
+      );
+
+    case "url":
+      if (typeof source.url !== "string") return null;
+      return handleUrlSource(source.url, source.mediaType || mime, part, log);
+
+    case "ref":
+      // Provider-hosted asset: there are no local bytes to hand to the MCP tool.
+      log(
+        `Skipping media part: provider-hosted ref (${String(source.provider ?? "unknown")})`,
+      );
+      return null;
+
+    default:
+      log(`Skipping media part: unknown source type ${String(source.type)}`);
+      return null;
+  }
 }
 
 // Prompt Generation
@@ -513,8 +675,8 @@ function applyPromptTemplate(
   return template
     .replace(/\{imageList\}/g, vars.imageList)
     .replace(/\{imageCount\}/g, String(vars.imageCount))
-    .replace(/\{toolName\}/g, vars.toolName)
-    .replace(/\{userText\}/g, vars.userText);
+    .replace(/\{userText\}/g, vars.userText)
+    .replace(/\{toolName\}/g, vars.toolName);
 }
 
 function generateInjectionPrompt(
@@ -554,138 +716,231 @@ User's request: ${userText || "(analyze the image)"}`;
 
 // Message Transformation
 //
-// The transformation flow:
-// 1. Find the last user message (most recent request)
-// 2. Extract and save any images from its parts
-// 3. Remove the image parts (they can't be sent to the model)
-// 4. Replace/update the text part with injection instructions
+// The transformation flow (inside the `context` hook, which sees the outbound request):
+// 1. Find the last user-role message in `event.messages`
+// 2. Extract and save any image media parts from its `content`
+// 3. Drop those media parts (the matched model can't interpret raw images)
+// 4. Put the injection instructions in the message's text part
+//
+// Decoded schema values may be immutable class instances, so the transform builds NEW
+// objects instead of mutating the ones it was handed: the message is rebuilt as a plain
+// `{ ...message, content: newContent }` and swapped into the messages array. That also
+// keeps the stored session transcript untouched — the pasted image stays in the user's
+// history and only the copy sent to the model changes.
 
-function findLastUserMessage(
-  messages: Array<{ info: Message; parts: Part[] }>,
-): { message: { info: Message; parts: Part[] }; index: number } | null {
+function findLastUserMessageIndex(messages: unknown[]): number {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].info.role === "user") {
-      return { message: messages[i], index: i };
-    }
+    if ((messages[i] as { role?: string })?.role === "user") return i;
   }
-  return null;
+  return -1;
 }
 
-function getModelFromMessage(message: {
-  info: Message;
-}): ModelInfo | undefined {
-  const info = message.info as { model?: ModelInfo };
-  return info.model;
-}
+/**
+ * Builds the replacement `content` array for a processed message.
+ *
+ * Processed media parts are dropped by object identity (V2 media parts carry no id).
+ * The injection text replaces the first remaining text part; if the message had no text
+ * part, one is prepended.
+ */
+function buildTransformedContent(
+  content: unknown[],
+  processedParts: Set<unknown>,
+  transformedText: string,
+): unknown[] {
+  const kept = content.filter((part) => !processedParts.has(part));
 
-function removeProcessedImageParts(
-  parts: Part[],
-  processedIds: Set<string>,
-): Part[] {
-  // Remove image parts that were successfully processed; they've been converted
-  // to file paths in the injection prompt and the model can't interpret raw images.
-  return parts.filter(
-    (part) => !(part.type === "file" && processedIds.has(part.id)),
-  );
-}
-
-function updateOrCreateTextPart(
-  message: { info: Message; parts: Part[] },
-  newText: string,
-): void {
-  const textPartIndex = message.parts.findIndex(isTextPart);
-
-  if (textPartIndex !== -1) {
-    (message.parts[textPartIndex] as TextPart).text = newText;
-  } else {
-    const newTextPart: TextPart = {
-      id: `transformed-${randomUUID()}`,
-      sessionID: message.info.sessionID,
-      messageID: message.info.id,
-      type: "text",
-      text: newText,
-      synthetic: true,
+  const textIndex = kept.findIndex(isTextPart);
+  if (textIndex !== -1) {
+    const copy = kept.slice();
+    copy[textIndex] = {
+      ...(kept[textIndex] as Record<string, unknown>),
+      text: transformedText,
     };
-    message.parts.unshift(newTextPart);
+    return copy;
+  }
+
+  return [{ type: "text", text: transformedText }, ...kept];
+}
+
+/**
+ * Replaces the message at `index` without mutating the original object.
+ *
+ * Tries the least destructive option that actually takes effect: swap the array element
+ * in place, else reassign `event.messages`, else (last resort) write `content` on the
+ * original message object.
+ */
+function applyTransformedMessage(
+  event: any,
+  messages: unknown[],
+  index: number,
+  updated: unknown,
+  log: Logger,
+): boolean {
+  try {
+    messages[index] = updated;
+    if (messages[index] === updated) return true;
+  } catch {
+    // Frozen array: fall through to reassigning event.messages.
+  }
+
+  try {
+    event.messages = [...messages.slice(0, index), updated, ...messages.slice(index + 1)];
+    if (event.messages?.[index] === updated) return true;
+  } catch {
+    // Not writable: fall through to mutating content in place.
+  }
+
+  try {
+    (messages[index] as { content?: unknown }).content = (
+      updated as { content?: unknown }
+    ).content;
+    return true;
+  } catch (err) {
+    log(`Could not apply the transformed message: ${errorMessage(err)}`);
+    return false;
   }
 }
 
-// Plugin Export
+/**
+ * `context` hook callback: rewrites image parts for models that cannot see them.
+ *
+ * Never throws — a plugin bug must not break the model request. On any unexpected problem
+ * the request is left untouched and the problem is logged.
+ */
+async function handleContextEvent(event: any, log: Logger): Promise<void> {
+  try {
+    const modelRef = event?.model;
+    const model: ModelInfo | undefined = modelRef
+      ? { providerID: modelRef.providerID, modelID: modelRef.id }
+      : undefined;
 
-export const OpencodeVisionPlugin: Plugin = async (input) => {
-  const { client, directory } = input;
+    if (!modelMatchesAnyPattern(model)) return;
+    log("Model matched, checking for images...");
 
-  const log: Logger = (msg) => {
-    client.app
-      .log({ body: { service: PLUGIN_NAME, level: "info", message: msg } })
-      .catch(() => {});
-  };
+    const messages = Array.isArray(event.messages) ? event.messages : [];
+    const index = findLastUserMessageIndex(messages);
+    if (index === -1) return;
 
-  await loadPluginConfig(directory, log);
-  log("Plugin initialized");
+    const message = messages[index] as { content?: unknown };
+    const content = Array.isArray(message.content) ? message.content : [];
+    const imageParts = content.filter(isImageMediaPart);
+    if (imageParts.length === 0) return;
 
-  return {
-    event: async ({ event }) => {
-      if (event.type === "session.idle") {
-        await cleanupSessionTempImages(event.properties.sessionID, log);
-      }
+    log("Found images in message, processing...");
 
-      if (event.type === "server.instance.disposed") {
-        await cleanupAllTempImages(log);
-      }
-    },
-    "experimental.chat.messages.transform": async (_input, output) => {
-      const { messages } = output;
+    // Opportunistic: reclaim leftovers from aborted sessions while we are here.
+    await cleanupStaleTempImages(log);
 
-      const result = findLastUserMessage(messages);
-      if (!result) return;
+    const savedImages: SavedImage[] = [];
+    for (const part of imageParts) {
+      const saved = await processMediaPart(part, log);
+      if (saved) savedImages.push(saved);
+    }
 
-      const { message: lastUserMessage, index: lastUserIndex } = result;
+    if (savedImages.length === 0) {
+      log("No images were successfully saved");
+      return;
+    }
 
-      const model = getModelFromMessage(lastUserMessage);
-      if (!modelMatchesAnyPattern(model)) return;
+    trackTemporaryImages(String(event.sessionID), savedImages);
 
-      log("Model matched, checking for images...");
+    log(`Saved ${savedImages.length} image(s), transforming message...`);
 
-      const hasImages = lastUserMessage.parts.some(isImageFilePart);
-      if (!hasImages) return;
+    const userText =
+      (content.find(isTextPart) as { text?: string } | undefined)?.text ?? "";
 
-      log("Found images in message, processing...");
+    const transformedText = generateInjectionPrompt(
+      savedImages,
+      userText,
+      getImageAnalysisTool(),
+    );
 
-      const savedImages = await extractImagesFromParts(
-        lastUserMessage.parts,
-        log,
+    const processedParts = new Set(savedImages.map((img) => img.part));
+    const newContent = buildTransformedContent(
+      content,
+      processedParts,
+      transformedText,
+    );
+
+    const applied = applyTransformedMessage(
+      event,
+      messages,
+      index,
+      { ...(message as Record<string, unknown>), content: newContent },
+      log,
+    );
+
+    if (applied) log("Successfully injected image path instructions");
+  } catch (err) {
+    log(`Context transform skipped after error: ${errorMessage(err)}`);
+  }
+}
+
+// Plugin Definition (V2: a plain `{ id, setup }` object, no npm import needed)
+
+export const OpencodeVisionPlugin = {
+  id: PLUGIN_NAME,
+
+  /**
+   * Registers the plugin's hooks. `ctx` is the V2 plugin context; only
+   * `ctx.location.directory` and `ctx.session.hook` are used.
+   *
+   * Returns a Cleanup that disposes the hook registrations and deletes any temp
+   * images still pending (the V2 replacement for the V1 `server.instance.disposed` event).
+   */
+  setup: async (ctx: any) => {
+    const directory: string = ctx?.location?.directory ?? process.cwd();
+
+    // V1 used client.app.log(); the V2 plugin API has no log endpoint, so stdout is
+    // captured into OpenCode's log file instead.
+    const log: Logger = (msg) => {
+      console.log(`[${PLUGIN_NAME}] ${msg}`);
+    };
+
+    await loadPluginConfig(directory, log);
+    log("Plugin initialized");
+
+    const registrations: Array<{ dispose: () => Promise<void> }> = [];
+
+    // Rewrites image media parts for models that cannot accept them.
+    try {
+      registrations.push(
+        await ctx.session.hook("context", (event: any) =>
+          handleContextEvent(event, log),
+        ),
       );
-      if (savedImages.length === 0) {
-        log("No images were successfully saved");
-        return;
+    } catch (err) {
+      log(
+        `Could not register the "context" hook (${errorMessage(err)}); image injection is disabled.`,
+      );
+    }
+
+    // Deletes this session's temp images once it finishes model work.
+    try {
+      registrations.push(
+        await ctx.session.hook("experimental.idle", (event: any) => {
+          cleanupSessionTempImages(String(event?.sessionID), log).catch((err) =>
+            log(`Idle cleanup failed: ${errorMessage(err)}`),
+          );
+        }),
+      );
+    } catch (err) {
+      log(
+        `Could not register the "experimental.idle" hook (${errorMessage(err)}); temp images rely on the stale sweep.`,
+      );
+    }
+
+    return async () => {
+      for (const registration of registrations) {
+        try {
+          await registration.dispose();
+        } catch {
+          // Shutting down; nothing useful to do.
+        }
       }
-
-      trackTemporaryImages(lastUserMessage.info.sessionID, savedImages);
-
-      log(`Saved ${savedImages.length} image(s), transforming message...`);
-
-      const existingTextPart = lastUserMessage.parts.find(isTextPart);
-      const userText = existingTextPart?.text ?? "";
-
-      const transformedText = generateInjectionPrompt(
-        savedImages,
-        userText,
-        getImageAnalysisTool(),
-      );
-
-      const processedIds = new Set(savedImages.map((img) => img.partId));
-      lastUserMessage.parts = removeProcessedImageParts(
-        lastUserMessage.parts,
-        processedIds,
-      );
-
-      updateOrCreateTextPart(lastUserMessage, transformedText);
-      messages[lastUserIndex] = lastUserMessage;
-
-      log("Successfully injected image path instructions");
-    },
-  };
+      await cleanupAllTempImages(log);
+    };
+  },
 };
 
 export default OpencodeVisionPlugin;

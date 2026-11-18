@@ -10,6 +10,17 @@
 > Where this plan says `:8081` as the vision backend, read `:8083`. The T0–T5 matrix below
 > remains the acceptance suite; re-run it after a clean deploy.
 
+> **STATUS (2026-11-18): plugin re-written for the OpenCode V2 plugin API.** OpenCode 2.x
+> (`v2.2.5` installed) only loads plugins that export a **definition object**
+> (`{ id, setup }`); the V1-era "default export is an async function" shape fails at startup
+> with `PluginModule.LoadError: Plugin must export a default definition with an id and an
+> effect or setup function. (cause: SchemaError(Expected object at ["default"]))`. That error
+> recurred in `opencode.log` on 2026-11-11, -12 and -18 — the plugin had been inert since the
+> V2 upgrade. The V1 source is preserved at
+> `backups/opencode-vision.ts.v1.bak-20261118` (SHA-256 `B81D1F98…40B1`). Everything below
+> still describes the V1 wiring; see **"Migration log"** at the end for the V1 → V2 mapping and
+> the re-run checklist. The MCP server (`mcp/vision_mcp.py`) is unchanged.
+
 Authoritative, ordered build plan. Execute phases in order; do not start a phase until the
 previous phase's exit test passes. Checkboxes are for the downstream coder.
 
@@ -196,3 +207,58 @@ Supplementary checks:
 - **mmproj/GGUF version skew** — if the mmproj projector and main GGUF are from mismatched
   builds, T0 fails with garbled output. Keep both pinned together in `Deploy-Homelab.ps1`.
 - **Symlink permissions on Windows** — may need Developer Mode; fallback is copy-after-build.
+- **Plugin API drift** — the V2 plugin/hook surface (`ctx.session.hook`, `MediaPart`) is
+  Effect-Schema based and still moving. Pinned shape for the rewrite:
+  `@opencode/plugin@2.2.5` / `@opencode/ai@2.2.5` `.d.ts` (also verified against 2.3.2).
+  Re-check the hook names and `MediaPart.media.source` tags after any OpenCode upgrade.
+
+---
+
+## Migration log — OpenCode V1 → V2 plugin API (2026-11-18)
+
+**Root cause.** V2 validates the module's default export against a `Plugin` struct
+(`{ id: string, setup: (ctx) => Cleanup | void }`). The vendored V1 file exported a bare async
+function, so the loader rejected the whole module — no hooks, no log lines, plugin inert.
+Migration doc: <https://opencode.ai/v2/docs/build/plugins/migrate-v1> ("Moving a file or
+renaming its config entry is not enough").
+
+**API mapping used in the rewrite** (`plugins/opencode-vision.ts`, still zero runtime npm deps —
+only `node:*` built-ins, `@ts-nocheck` kept, no `tsconfig.json` added to the config dir):
+
+| V1 (dead in V2) | V2 replacement |
+| --- | --- |
+| `export default async (input) => ({ event, … })` | `export default { id: "opencode-vision", setup: async (ctx) => { … } }` |
+| `client.app.log({ body })` | `console.log("[opencode-vision] …")` |
+| `experimental.chat.messages.transform` | `await ctx.session.hook("context", ev => …)` (mutate the outbound request; callback returns `void`) |
+| `chat.message` / `event` handler | `ctx.session.hook("experimental.idle", ev => …)` for temp-file cleanup |
+| `server.instance.disposed` | the `Cleanup` fn returned from `setup` (also disposes hook `Registration`s) |
+| model on the user message (`info.model.modelID`) | `ev.model` = `Model.Ref { providerID, id, variant? }` — note `id`, not `modelID` |
+| `parts: Part[]`, `FilePart { mime, url, id }` | `message.content: ContentPart[]`, `MediaPart { type:"media", media: Asset{ source }, filename? }` |
+| image URL schemes (`file://`, `data:`, `http`) | tagged `media.source`: `base64` / `bytes` → decode + save to temp; `url` (`file:`/`http(s)`/`data:`) → path or pass-through; `ref` → skipped (no local bytes) |
+| part `id` used to drop processed parts | object identity (`Set` of processed part objects) — V2 media parts have no id |
+
+**Unchanged:** config filename/precedence (`<project>/.opencode/opencode-vision.json` >
+`~/.config/opencode/opencode-vision.json` > built-in defaults), wildcard model matcher,
+`%TEMP%/opencode-vision/<uuid>.<ext>` temp dir, the injection prompt template and its
+`{imageList}` `{imageCount}` `{toolName}` `{userText}` variables, and the log strings the
+T5 matrix greps for. Added resilience: per-request try/catch (a plugin bug must never break a
+model request), a stale-temp-file sweep for files older than 12 h, and `try/catch` around each
+hook registration so a renamed hook can't take the whole plugin down.
+
+**Re-run checklist for this rewrite (maps to T2/T5):**
+
+- [ ] **M.1** Restart OpenCode; log shows `[opencode-vision] Loaded models from user config: *`,
+      `[opencode-vision] Plugin initialized`, and **no** `PluginModule.LoadError`.
+- [ ] **M.2** T2: plugin status is no longer `[failed, local]` in the `plugin reconciliation` line.
+- [ ] **M.3** T3: `vision_analyze` still registered (unchanged, MCP only).
+- [ ] **M.4** T5 paste-and-ask loop, incl. the `Model matched…` / `Found images…` /
+      `Saved 1 image(s), transforming message…` log lines, then a `vision_analyze` call with the
+      temp path.
+- [ ] **M.5** 5.2 temp cleanup: file gone after the session goes idle (`experimental.idle`).
+- [ ] **M.6** 5.3 negative: non-matching model → no transform.
+- [x] **M.7** Mirror into the fork (`plugin/src-fork/`, source of truth
+      `github.com/bankenichi/opencode-vision`) — done 2026-11-18: fork commit
+      `d0c6652` on `main` (V2 rewrite fully typed, `npm run build` green, deps bumped
+      to `@opencode/plugin` peer >=2.0.0 / dev ^2.2.5 + `@opencode/ai` dev). **Not
+      pushed yet.** The fork is a nested git repo; `opencode-vision/.gitignore` now
+      ignores all of `plugin/src-fork/` so the outer repo never sees a gitlink.
